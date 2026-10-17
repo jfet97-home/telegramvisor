@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /opt/runtime/aarch64-unknown-linux-musl/bin/codex "$@"

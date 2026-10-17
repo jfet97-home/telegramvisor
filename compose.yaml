@@ -1,0 +1,48 @@
+services:
+  telegramvisor:
+    build: .
+    image: telegramvisor:local
+    restart: unless-stopped
+    init: true
+    read_only: true
+    user: "501:20"
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 64
+    mem_limit: 768m
+    ports: ["127.0.0.1:9037:9037", "127.0.0.1:9038:9038"]
+    environment:
+      T3_URL: http://host.docker.internal:3773
+      T3_TOKEN_FILE: /run/secrets/t3-read-token
+      T3_INPUT_TOKEN_FILE: /run/secrets/t3-input-token
+      T3_OPERATE_TOKEN_FILE: /run/secrets/t3-operate-token
+      MCPX_URL: http://mcpx:9000/mcp/lazy
+      DATA_DIRECTORY: /data
+      TELEGRAM_ENABLED: "false"
+      INPUT_ENABLED: "false"
+      CX_HOME: /data/runtime-auth
+      CX_SEED_FILE: /run/secrets/codex-auth.json
+      UI_HOST: 0.0.0.0
+      UI_PORT: "9038"
+      HEALTH_PORT: "9037"
+    networks: [mcpx]
+    volumes:
+      - state:/data
+      - ./secrets:/run/secrets:ro
+    tmpfs: ["/tmp:size=128m,mode=1777"]
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:9037/health').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    logging:
+      driver: json-file
+      options: {max-size: 5m, max-file: "3"}
+volumes:
+  state:
+
+networks:
+  mcpx:
+    external: true
+    name: ${MCPX_NETWORK:-lunar-mcpx_default}

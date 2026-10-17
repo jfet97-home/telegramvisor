@@ -1,0 +1,17 @@
+node_modules/
+dist/
+ui-dist/
+vendor/
+knowledge/
+.qmd/
+*.sqlite3*
+*.env
+secrets/
+
+.env*
+!.env.example
+*.sqlite*
+*.db
+*.db-*
+*.log
+.mypy_cache/
