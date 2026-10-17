@@ -1,5 +1,11 @@
 # Telegramvisor
 
+Keep `skills/` focused on portable product usage. Personal installation policies,
+source maintenance and deployment procedures belong in the global `telegramvisor`
+skill outside this repository. The Git-backed `use-telegramvisor` skill is exposed
+globally through Skillshare; it must not depend on personal maintenance files.
+Skill/documentation-only changes need no application rebuild or restart.
+
 This service owns Telegram communication for T3: recaps, full replies, native
 questionnaires, delivery/cleanup history, chat policy and explicit recovery.
 Andrea wants this service on the Mac only. Do not install or deploy Telegramvisor
