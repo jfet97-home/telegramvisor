@@ -15,7 +15,8 @@ Telegramvisor uses unmodified T3 APIs and the existing MCPX Telegram bridge.
 
 The default dashboard is http://127.0.0.1:9038. History shows retained notification,
 questionnaire and cleanup outcomes. Chats controls exclusions and the one interactive
-questionnaire chat. Recovery can ask an eligible chat for a fresh assessment when
+questionnaire chat. These exclusions control Telegram communication; workflow
+supervision has its own independent exclusions. Recovery can ask an eligible chat for a fresh assessment when
 historical completion coverage is incomplete; currently one request per chat is
 retained. A fresh answer does not reconstruct an old notification.
 

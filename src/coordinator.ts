@@ -6,7 +6,7 @@ import { RecapError, Recapper } from "./recap.js";
 import { Store, StoreError, type StoreShape, type StoreStats } from "./store.js";
 import { T3Client, T3TransportError } from "./t3.js";
 import { TelegramClient } from "./telegram.js";
-import type { TelegramvisorConfig } from "./types.js";
+import type { TelegramvisorConfig, ThreadInfo } from "./types.js";
 import type { InputStoreCapacity } from "./input-store.js";
 import { collectRecentCompletions, collectFullCompletions, readCompletionHistory, CompletionWindowReadError } from "./completion-scan.js";
 import { isManagedThread } from "./managed-threads.js";
@@ -117,6 +117,11 @@ const settleInterruptedSend = (store: StoreShape, jobId: string) => Effect.gen(f
   if (job?.state === "sending") yield* store.markUnknown(jobId, "interrupted_send", Date.now());
 }).pipe(Effect.orElseSucceed(() => undefined));
 
+const checkManagedThread = (config: TelegramvisorConfig, thread: ThreadInfo) => Effect.try({
+  try: () => isManagedThread(config, thread),
+  catch: (cause) => cause instanceof Error ? cause : new Error("managed_thread_check_failed"),
+});
+
 export const refreshTelegramStatus = (status: TelegramvisorStatus) => Effect.gen(function* () {
   const telegram = yield* TelegramClient;
   yield* telegram.getBotInfo();
@@ -175,10 +180,15 @@ export const runTelegramvisor = (config: TelegramvisorConfig, status: Telegramvi
     const hints = yield* store.dueHints(Date.now(), 20);
     for (const hint of hints) {
       yield* Effect.gen(function* () {
-        if (!config.telegramEnabled || currentThreadPolicy(config).excludedThreadIds.includes(hint.threadId) ||
-          (hint.shell && (!isMainThread(hint.shell) || isManagedThread(config, hint.shell)))) {
+        if (!config.telegramEnabled || currentThreadPolicy(config).excludedThreadIds.includes(hint.threadId)) {
           yield* store.doneHint(hint.threadId, hint.revision);
           return;
+        }
+        if (hint.shell && typeof hint.shell.lineage?.rootThreadId === "string") {
+          if (!isMainThread(hint.shell) || (yield* checkManagedThread(config, hint.shell))) {
+            yield* store.doneHint(hint.threadId, hint.revision);
+            return;
+          }
         }
         const dueAt = nextCompletionRead.get(hint.threadId) ?? 0;
         if (dueAt > Date.now()) {
@@ -192,7 +202,7 @@ export const runTelegramvisor = (config: TelegramvisorConfig, status: Telegramvi
         if (nextCompletionRead.size > 50_000) nextCompletionRead.delete(nextCompletionRead.keys().next().value!);
         const projection = snapshot.projection;
         if (!isMainThread(projection.thread) || currentThreadPolicy(config).excludedThreadIds.includes(hint.threadId) ||
-          isManagedThread(config, projection.thread)) {yield* store.doneHint(hint.threadId, hint.revision);return;}
+          (yield* checkManagedThread(config, projection.thread))) {yield* store.doneHint(hint.threadId, hint.revision);return;}
         const result = history.kind === "recent"
           ? yield* collectRecentCompletions(store, history.snapshot, descriptor.environmentId, notificationsAfter, Date.now())
           : yield* collectFullCompletions(store, history.snapshot, descriptor.environmentId, notificationsAfter, Date.now());

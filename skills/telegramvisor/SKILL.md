@@ -20,7 +20,8 @@ verification. Preserve the independent flags: Mac enabled, Lima disabled until c
 
 Use `telegramvisor auth forge` in the service account/container for a five-minute
 one-use login token. Sessions retain their original eight-hour deadline on restart.
-The dashboard has History, Recovery and Chats. Mutations require the current CSRF
+The dashboard has History, Recovery and Chats. Its exclusions are independent
+from the workflow service; both lists were seeded from the old policy at extraction. Mutations require the current CSRF
 and session headers; never automatically replay after an uncertain response.
 
 Preserve telegramvisor.sqlite3, telegram-input.sqlite3,
