@@ -8,7 +8,7 @@ h2 {font-size: 1.25rem;}
 header {margin-block-end: 1.5rem;}
 .row {display: flex; align-items: center; flex-wrap: wrap; gap: .75rem;}
 .between {justify-content: space-between;}
-.stack {display: grid; gap: 1rem;}
+.stack {display: grid; gap: 1rem; min-width: 0; grid-template-columns: minmax(0, 1fr);}
 .panel {padding: 1.5rem; background: white; border: 1px solid #cbd5e1; border-radius: .8rem; margin-block: 1rem;}
 button, input, select {font: inherit; min-height: 3rem; border: 1px solid #64748b; border-radius: .4rem; background: white; color: inherit; padding: .6rem .85rem; max-width: 100%;}
 button {cursor: pointer;}
@@ -21,6 +21,7 @@ input[type="checkbox"] {min-height: 1.25rem; width: 1.25rem; height: 1.25rem; fl
 fieldset {margin: 0; padding: 1rem; border: 1px solid #cbd5e1; border-radius: .4rem; min-width: 0;}
 legend {font-weight: 600; padding-inline: .35rem;}
 .check {display: flex; align-items: center; gap: .75rem; min-height: 3rem; padding-block: .5rem;}
+.check > span {min-width: 0; overflow-wrap: anywhere;}
 .check small {display: block; color: #526177; overflow-wrap: anywhere;}
 .chat-list {max-height: 28rem; overflow: auto;}
 .muted, time {color: #526177;}
