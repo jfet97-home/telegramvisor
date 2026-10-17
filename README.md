@@ -11,6 +11,9 @@ Telegram communication for T3, independently of project and workflow supervision
 
 Telegramvisor uses unmodified T3 APIs and the existing MCPX Telegram bridge.
 
+Andrea's deployment runs only on the Mac. Telegramvisor was explicitly removed
+from Lima; VM installation and port forwarding require a new explicit request.
+
 ## Dashboard
 
 The default dashboard is http://127.0.0.1:9038. History shows retained notification,

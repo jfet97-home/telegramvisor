@@ -12,11 +12,11 @@ Read project AGENTS.md, knowledge/INDEX.md and relevant pages before source chan
 
 Mac uses Docker context desktop-linux and private Compose
 `~/.config/telegramvisor/compose.yaml`; dashboard9038 and health9037 bind to loopback.
-Lima uses the existing Lab Dokploy workflow and versioned deployment definitions
-in `/Users/andreasimonecosta/Developer/t3-lab`; forwarded dashboard19038/health19037.
+Telegramvisor is Mac-only. Andrea explicitly removed it from Lima; do not install,
+deploy or forward it into the VM without a new explicit request.
 Use the Lab's current-state and extraction ledger for actual installed revisions.
-Normal authorized implementation batches include both deployments and bounded live
-verification. Preserve the independent flags: Mac enabled, Lima disabled until changed.
+Normal authorized implementation batches include the Mac deployment and bounded live
+verification. The separate workflow Supervisor continues to run on Mac and Lima.
 
 Use `telegramvisor auth forge` in the service account/container for a five-minute
 one-use login token. Sessions retain their original eight-hour deadline on restart.
