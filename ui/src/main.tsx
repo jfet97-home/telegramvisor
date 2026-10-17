@@ -1,7 +1,7 @@
 import {useEffect, useState} from "react";
 import {createRoot} from "react-dom/client";
 import {CompletionCoverage} from "./completion-coverage.js";
-import {clearAccess, getCsrfToken, loadAccess, sessionHeaders, setSessionToken} from "./access.js";
+import {clearAccess, getCsrfToken, getSessionToken, loadAccess, sessionHeaders, setSessionToken} from "./access.js";
 import "./style.css";
 
 type Policy = {generation: number; excludedThreadIds: string[]; interactiveThreadId: string | null};
@@ -120,7 +120,7 @@ function App() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   useEffect(() => {void loadAccess().then(setAuthenticated).catch(() => setAuthenticated(false));
-    const required = () => {setAuthenticated(false);setError("Sign in again. Your previous action has not been retried.");};
+    const required = () => {setAuthenticated(false);if (getSessionToken()) setError("Sign in again. Your previous action has not been retried.");};
     window.addEventListener("telegramvisor-auth-required", required);return () => window.removeEventListener("telegramvisor-auth-required", required);
   }, []);
   if (authenticated === null) return <main><p role="status">Checking sign-in…</p></main>;
