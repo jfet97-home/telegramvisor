@@ -118,6 +118,7 @@ export interface TelegramvisorConfig {
   cxSeedFile: string;
   excludedThreadIds: string[];
   threadPolicy?: import("./thread-policy.js").ThreadPolicyStore;
+  recapSettings?: import("./recap-settings.js").RecapSettingsStore;
   healthPort: number;
   modelTimeoutMs: number;
   telegramEnabled?: boolean;

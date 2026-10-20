@@ -100,7 +100,7 @@ export interface StoreShape {
   dueJobs(now: number, states?: ReadonlyArray<SafeDueState>, limit?: number): Effect.Effect<Job[], StoreError>;
   getJob(id: string): Effect.Effect<Job | null, StoreError>;
   setReady(id: string, text: string, now: number): Effect.Effect<boolean, StoreError>;
-  skipRecap(id: string): Effect.Effect<boolean, StoreError>;
+  skipRecap(id: string, includePrepared?: boolean): Effect.Effect<boolean, StoreError>;
   claimSend(id: string, now: number): Effect.Effect<boolean, StoreError>;
   markSent(id: string, messageId: number, now: number): Effect.Effect<boolean, StoreError>;
   markUnknown(id: string, error: string, now: number): Effect.Effect<boolean, StoreError>;
@@ -698,14 +698,14 @@ class SqliteStore implements StoreShape {
     `).run(text, at, at, jobId).changes) > 0);
   });
 
-  skipRecap = (id: string): Effect.Effect<boolean, StoreError> => runStoreOperation(() => {
+  skipRecap = (id: string, includePrepared = false): Effect.Effect<boolean, StoreError> => runStoreOperation(() => {
     const jobId = readString(id, "job id");
     // the permanent identity survives deletion, preventing replay after restart
     return this.transaction(() => {
-      const job = getRow(this.db, "SELECT * FROM jobs WHERE id=? AND state='pending' AND text IS NULL",jobId);
-      if (!job) return false;
+      const job = getRow(this.db, "SELECT * FROM jobs WHERE id=? AND (state='pending' OR (?=1 AND state='ready'))",jobId, includePrepared ? 1 : 0);
+      if (!job || String(job.delivery_key) !== deliveryKey(String(job.environment_id), String(job.thread_id), String(job.run_id))) return false;
       this.db.prepare("INSERT OR IGNORE INTO recap_audit VALUES(?,?,?,'skipped',?)").run(jobId,String(job.thread_id),String(job.run_id),Date.now());
-      return Number(this.db.prepare("DELETE FROM jobs WHERE id=? AND state='pending' AND text IS NULL").run(jobId).changes) > 0;
+      return Number(this.db.prepare("DELETE FROM jobs WHERE id=? AND state IN ('pending','ready')").run(jobId).changes) > 0;
     });
   });
 

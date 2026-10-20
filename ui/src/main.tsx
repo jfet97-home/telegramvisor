@@ -5,11 +5,13 @@ import {clearAccess, getCsrfToken, getSessionToken, loadAccess, sessionHeaders, 
 import "./style.css";
 
 type Policy = {generation: number; excludedThreadIds: string[]; interactiveThreadId: string | null};
+type RecapSettings = {generation: number; enabled: boolean; enabledAt: number};
 type Activity = {id: string; kind: string; threadId: string | null; state: string; reason: string | null; detail: string | null; createdAt: number};
 type Snapshot = {
   enabled: boolean; inputEnabled: boolean;
   threads: Array<{id: string; title: string}>;
   threadPolicy: Policy;
+  recapSettings: RecapSettings;
   history: Activity[];
   status: {t3Connected: boolean; telegramState: string; modelState: string; inputState: string; inputLastErrorPhase: string | null;
     readiness: {ready: boolean}; store: {completionCoverageGaps?: number; jobs: Record<string, number>} | null};
@@ -88,6 +90,8 @@ function Dashboard({onSignOut, draft, onDraft}: {onSignOut: () => Promise<void>;
   const [data, setData] = useState<Snapshot | null>(null);
   const [view, setView] = useState("history");
   const [error, setError] = useState("");
+  const [savingRecaps, setSavingRecaps] = useState(false);
+  const [recapMessage, setRecapMessage] = useState("");
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {try {const value = await call("/api/snapshot") as Snapshot;if (!cancelled) {setData(value);setError("");}}
@@ -103,7 +107,19 @@ function Dashboard({onSignOut, draft, onDraft}: {onSignOut: () => Promise<void>;
       <section className="panel stack" aria-label="Service status">
         <div className="row between"><strong>{data.status.t3Connected ? "T3 connected" : "T3 unavailable"}</strong>
           <span className="badge">{!data.enabled ? "Telegram disabled" : data.status.readiness.ready ? "Ready" : "Needs attention"}</span></div>
-        <div className="row"><span>Telegram: {data.status.telegramState}</span><span>Recaps: {data.status.modelState}</span><span>Questions: {data.status.inputState}</span></div>
+        <div className="row"><span>Telegram: {data.status.telegramState}</span><span>Recaps: {data.recapSettings.enabled ? data.status.modelState : "off"}</span><span>Questions: {data.status.inputState}</span></div>
+        <div className="row between"><strong id="recap-toggle-label">Automatic chat recaps</strong>
+          <button type="button" aria-labelledby="recap-toggle-label" aria-describedby="recap-toggle-help" aria-pressed={data.recapSettings.enabled} disabled={savingRecaps} onClick={() => {
+            setSavingRecaps(true);setRecapMessage("");setError("");
+            void call("/api/recap-settings", {generation: data.recapSettings.generation, enabled: !data.recapSettings.enabled}).then(value => {
+              const recapSettings = value as RecapSettings;
+              setData(current => current ? {...current, recapSettings} : current);
+              setRecapMessage(recapSettings.enabled ? "Automatic recaps enabled for new completions." : "Automatic recaps disabled.");
+            }).catch(cause => setError(cause instanceof Error ? cause.message : "Recap settings could not be confirmed. Refresh before trying again."))
+              .finally(() => setSavingRecaps(false));
+          }}>{savingRecaps ? "Saving…" : data.recapSettings.enabled ? "Disable recaps" : "Enable recaps"}</button></div>
+        <p id="recap-toggle-help" className="muted">Off by default. Applies to all chats and stays saved after restart. Replies and questionnaires continue as usual. Enabling starts with new completions.</p>
+        <p role="status">{recapMessage}</p>
         {data.status.inputLastErrorPhase === "native_requests" && <p role="status">Current questions could not be read from T3. No question has been assumed answered.</p>}
         <div className="row"><span>Queued: {(jobs?.pending ?? 0) + (jobs?.ready ?? 0)}</span><span>Unconfirmed: {jobs?.unknown ?? 0}</span><span>History gaps: {data.status.store?.completionCoverageGaps ?? 0}</span></div>
       </section>

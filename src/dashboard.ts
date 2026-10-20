@@ -7,6 +7,7 @@ import {extname, join, resolve, sep} from "node:path";
 import {Effect, Schema} from "effect";
 import {createServiceAuth} from "./service-auth.js";
 import {ThreadPolicy} from "./thread-policy-contract.js";
+import {currentRecapSettings} from "./recap-settings.js";
 import {CompletionRecovery} from "./completion-recovery.js";
 import {makeNativeRpc} from "./native-rpc.js";
 import {isManagedThread} from "./managed-threads.js";
@@ -148,7 +149,15 @@ export const startDashboard = async (config: TelegramvisorConfig, {store, t3, st
         const history = [...await Effect.runPromise(store.history(), {signal}), ...readInputHistory(config.dataDirectory)].sort((a,b) => b.createdAt-a.createdAt).slice(0, 200);
         send(200, {status: {...status, readiness: readiness(status, config)}, enabled: config.telegramEnabled, inputEnabled: config.inputEnabled,
           threads: shells.filter(thread => thread.lineage?.relationshipToParent !== "subagent" && !isManagedThread(config, thread)),
-          threadPolicy: config.threadPolicy?.get(), history});return;
+          threadPolicy: config.threadPolicy?.get(), recapSettings: currentRecapSettings(config), history});return;
+      }
+      if (url.pathname === "/api/recap-settings" && request.method === "POST") {
+        if (!config.recapSettings) {send(409, {message: "Recap settings are unavailable."});return;}
+        let payload: unknown;try {payload = await readBody(request);} catch (error) {if (error instanceof BodyLimitError) throw error;send(400, {message: "Choose valid recap settings."});return;}
+        if (!record(payload) || typeof payload.enabled !== "boolean" || typeof payload.generation !== "number" ||
+          !Number.isSafeInteger(payload.generation) || payload.generation < 1) {send(400, {message: "Choose valid recap settings."});return;}
+        try {send(200, config.recapSettings.save({generation: payload.generation, enabled: payload.enabled}));}
+        catch {send(409, {message: "Recap settings changed. Refresh before trying again."});}return;
       }
       if (url.pathname === "/api/chat-policy" && request.method === "POST") {
         if (!config.threadPolicy) {send(409, {message: "Chat settings are unavailable."});return;}

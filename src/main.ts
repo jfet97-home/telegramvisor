@@ -16,6 +16,7 @@ import { makeT3Client, T3Client } from "./t3.js";
 import { telegramClientLayer } from "./telegram.js";
 import { ThreadPolicyStore } from "./thread-policy.js";
 import { recapperLayer } from "./recap.js";
+import { RecapSettingsStore } from "./recap-settings.js";
 
 const config = loadConfig();
 const status = createStatus(config);
@@ -77,6 +78,10 @@ const inputWorker = (token: string) => Effect.gen(function* () {
   })), Effect.forever);
 
 const app = Effect.gen(function* () {
+  config.recapSettings = yield* Effect.acquireRelease(
+    Effect.sync(() => new RecapSettingsStore(config.dataDirectory)),
+    (store) => Effect.sync(() => store.close()),
+  );
   config.threadPolicy = yield* Effect.acquireRelease(
     Effect.sync(() => new ThreadPolicyStore(config.dataDirectory, {
       excludedThreadIds: config.excludedThreadIds,

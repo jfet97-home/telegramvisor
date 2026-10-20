@@ -33,6 +33,7 @@ export const readCompletionHistory = (t3: T3ClientShape, threadId: string, overs
 /** Preserves the original complete-history completion policy. */
 export const collectFullCompletions = (
   store: StoreShape, snapshot: T3ProjectionSnapshot, environmentId: string, notificationsAfter: number, now: number,
+  recapsAfter = -Infinity,
 ) => Effect.gen(function* () {
   const projection = snapshot.projection;
   const threadId = projection.thread.id;
@@ -41,6 +42,7 @@ export const collectFullCompletions = (
   for (const run of eligibleRuns(projection, notificationsAfter)) {
     if (yield* store.hasIdentity(environmentId, threadId, run.id)) continue;
     const updateId = telegramRouteUpdateId(projection, run);
+    if (updateId === null && (timestampMs(run.completedAt) ?? -Infinity) <= recapsAfter) continue;
     const jobId = updateId === null
       ? yield* store.enqueue(environmentId, threadId, run.id, yield* Effect.try(() => buildContext(projection, run.id, project)), now)
       : yield* store.enqueueReply(environmentId, threadId, run.id, yield* Effect.try(() => formatReplyParts(projection, run, project)), now);
@@ -50,6 +52,7 @@ export const collectFullCompletions = (
   for (const run of projection.runs) {
     const completedAt = timestampMs(run.completedAt);
     if (run.status === "completed" && completedAt !== null && completedAt > notificationsAfter &&
+      (telegramRouteUpdateId(projection, run) !== null || completedAt > recapsAfter) &&
       !(yield* store.hasIdentity(environmentId, threadId, run.id))) {settling = true;break;}
   }
   return {settling, queued, coverage: null};
@@ -62,6 +65,7 @@ export const collectRecentCompletions = (
   environmentId: string,
   notificationsAfter: number,
   now: number,
+  recapsAfter = -Infinity,
 ) => Effect.gen(function* () {
   const projection = snapshot.projection;
   const threadId = projection.thread.id;
@@ -84,11 +88,12 @@ export const collectRecentCompletions = (
       yield* store.recordCompletionGap(threadId, "incomplete_turn", run.id, now);
       continue;
     }
+    const updateId = telegramRouteUpdateId(projection, run);
+    if (updateId === null && (timestampMs(run.completedAt) ?? -Infinity) <= recapsAfter) continue;
     if (evidence.state !== "complete" || !eligible.has(run.id)) {
       settling = true;
       continue;
     }
-    const updateId = telegramRouteUpdateId(projection, run);
     const jobId = updateId === null
       ? yield* store.enqueue(environmentId, threadId, run.id, yield* Effect.try(() => buildContext(projection, run.id, project)), now)
       : yield* store.enqueueReply(environmentId, threadId, run.id, yield* Effect.try(() => formatReplyParts(projection, run, project)), now);

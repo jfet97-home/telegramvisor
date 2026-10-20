@@ -38,6 +38,12 @@ not a change to chat selection.
 
 ## Chat selection and exclusions
 
+Automatic chat recaps are off by default for all chats. The status panel's Enable
+recaps or Disable recaps button saves the choice immediately across restarts.
+Change it only when requested. Enabling starts with new completions and does not
+replay queued recaps or work completed while disabled. Full replies to Telegram
+messages, questionnaires and input-needed notices continue independently.
+
 Chats selects one interactive questionnaire conversation and independent exclusions
 for Telegram communication. Other eligible ordinary chats receive input-needed
 notices. The selected interactive chat can receive questionnaires even when listed

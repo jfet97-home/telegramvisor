@@ -44,7 +44,8 @@ test("recent collection preserves identities across restart without pretending o
   } finally {await rm(directory, {recursive: true, force: true});}
 });
 
-test("a cut-off Telegram request creates a coverage gap without a recap or handled identity", async () => {
+for (const recapsAfter of [-Infinity, Infinity]) {
+test(`a cut-off Telegram request creates a coverage gap with recap cutoff ${recapsAfter}`, async () => {
   const directory = await mkdtemp(join(tmpdir(), "completion-boundary-"));
   try {
     await Effect.runPromise(Effect.gen(function* () {
@@ -53,7 +54,7 @@ test("a cut-off Telegram request creates a coverage gap without a recap or handl
       const value = snapshot();
       value.projection.runs[0]!.userMessageId = "message:mcp:90d829bb-aada-40db-b243-797c00ac8f36:thread-send:telegram-route-123";
       value.projection.messages.shift();
-      const result = yield* collectRecentCompletions(store, value, "environment", 1, 100);
+      const result = yield* collectRecentCompletions(store, value, "environment", 1, 100, recapsAfter);
       assert.equal(result.settling, false);
       assert.equal(result.queued, 0);
       const stats = yield* store.stats();
@@ -63,6 +64,7 @@ test("a cut-off Telegram request creates a coverage gap without a recap or handl
     }).pipe(Effect.provide(makeStore(directory)), Effect.scoped));
   } finally {await rm(directory, {recursive: true, force: true});}
 });
+}
 
 test("complete cohort results equal a full fixture including exact Telegram answer routing", () => {
   const recent = snapshot().projection;
@@ -75,6 +77,35 @@ test("complete cohort results equal a full fixture including exact Telegram answ
   assert.deepEqual(formatReplyParts(full, full.runs[1]!, null), formatReplyParts(recent, recent.runs[0]!, null));
   assert.equal(telegramRouteUpdateId(full, full.runs[1]!), telegramRouteUpdateId(recent, recent.runs[0]!));
 });
+
+for (const kind of ["full", "recent"] as const) {
+  test(`${kind} collection keeps Telegram replies while recaps are off and excludes disabled-period recaps`, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "completion-recap-opt-in-"));
+    try {
+      await Effect.runPromise(Effect.gen(function* () {
+        const store = yield* Store;
+        const value = snapshot();
+        const collect = (recapsAfter: number) => kind === "full"
+          ? collectFullCompletions(store, value, "environment", 1, 100, recapsAfter)
+          : collectRecentCompletions(store, value, "environment", 1, 100, recapsAfter);
+        assert.equal((yield* collect(Infinity)).queued, 0);
+        assert.equal((yield* collect(Infinity)).settling, false);
+        const completedAt = Date.parse(value.projection.runs[0]!.completedAt!);
+        assert.equal((yield* collect(completedAt + 1)).queued, 0);
+        assert.equal((yield* collect(completedAt + 1)).settling, false);
+        assert.equal((yield* collect(completedAt - 1)).queued, 1);
+        const requestId = "message:mcp:90d829bb-aada-40db-b243-797c00ac8f36:thread-send:telegram-route-123";
+        value.projection.runs[0]!.id = "reply-run";
+        value.projection.runs[0]!.userMessageId = requestId;
+        for (const message of value.projection.messages) message.runId = "reply-run";
+        for (const node of value.projection.nodes as Array<{runId: string}>) node.runId = "reply-run";
+        value.projection.messages[0]!.id = requestId;
+        assert.equal((yield* collect(Infinity)).queued, 1);
+        assert.equal((yield* store.stats()).jobs.ready, 1);
+      }).pipe(Effect.provide(makeStore(directory)), Effect.scoped));
+    } finally {await rm(directory, {recursive: true, force: true});}
+  });
+}
 
 test("durable recovery reservation and positive outcomes survive concurrent updates and restart", async () => {
   const directory = await mkdtemp(join(tmpdir(), "completion-recovery-store-"));

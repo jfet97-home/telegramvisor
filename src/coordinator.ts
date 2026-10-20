@@ -1,7 +1,8 @@
 import { currentThreadPolicy } from "./thread-policy.js";
 import { Cause, Effect, Option, Schedule } from "effect";
 import { createServer } from "node:http";
-import { formatMessage, isMainThread } from "./domain.js";
+import { deliveryKey, formatMessage, isMainThread } from "./domain.js";
+import { currentRecapSettings } from "./recap-settings.js";
 import { RecapError, Recapper } from "./recap.js";
 import { Store, StoreError, type StoreShape, type StoreStats } from "./store.js";
 import { T3Client, T3TransportError } from "./t3.js";
@@ -41,11 +42,11 @@ export interface TelegramvisorStatus {
   store: StoreStats | null;
 }
 
-export const createStatus = (config?: Pick<TelegramvisorConfig, "telegramEnabled">): TelegramvisorStatus => ({
+export const createStatus = (config?: Pick<TelegramvisorConfig, "telegramEnabled" | "recapSettings">): TelegramvisorStatus => ({
   inputReplyCleanupExpired: 0,
   startedAt: new Date().toISOString(), activation: null, environmentId: null,
   t3Connected: false, storeState: "starting",
-  modelState: config?.telegramEnabled ? "idle" : "disabled",
+  modelState: config?.telegramEnabled && config.recapSettings?.get().enabled ? "idle" : "disabled",
   telegramState: config?.telegramEnabled ? "starting" : "disabled",
   deliveryState: config?.telegramEnabled ? "idle" : "disabled",
   heartbeat: Date.now(), scanHeartbeat: Date.now(), deliveryHeartbeat: Date.now(), deliveryBusySince: null,
@@ -203,9 +204,11 @@ export const runTelegramvisor = (config: TelegramvisorConfig, status: Telegramvi
         const projection = snapshot.projection;
         if (!isMainThread(projection.thread) || currentThreadPolicy(config).excludedThreadIds.includes(hint.threadId) ||
           (yield* checkManagedThread(config, projection.thread))) {yield* store.doneHint(hint.threadId, hint.revision);return;}
+        const recapSettings = currentRecapSettings(config);
+        const recapsAfter = recapSettings.enabled ? recapSettings.enabledAt : Infinity;
         const result = history.kind === "recent"
-          ? yield* collectRecentCompletions(store, history.snapshot, descriptor.environmentId, notificationsAfter, Date.now())
-          : yield* collectFullCompletions(store, history.snapshot, descriptor.environmentId, notificationsAfter, Date.now());
+          ? yield* collectRecentCompletions(store, history.snapshot, descriptor.environmentId, notificationsAfter, Date.now(), recapsAfter)
+          : yield* collectFullCompletions(store, history.snapshot, descriptor.environmentId, notificationsAfter, Date.now(), recapsAfter);
         if (result.queued > 0) yield* log("recent_completions_queued", {threadId: hint.threadId, count: result.queued});
         if (result.coverage && (result.coverage.olderHistory === "limited" || result.coverage.incompleteRuns.length > 0))
           yield* log("completion_coverage_limited", {threadId: hint.threadId, incompleteRuns: result.coverage.incompleteRuns.length});
@@ -230,10 +233,19 @@ export const runTelegramvisor = (config: TelegramvisorConfig, status: Telegramvi
   const deliver = Effect.gen(function* () {
     if (!telegram || !recapper) return;
     status.deliveryHeartbeat = Date.now();
+    if (!currentRecapSettings(config).enabled) status.modelState = "disabled";
+    else if (status.modelState === "disabled") status.modelState = "idle";
     const jobs = yield* store.dueJobs(Date.now(), ["pending", "ready", "unknown"], 10);
     for (const job of jobs) {
       status.deliveryBusySince = Date.now();
       const action = Effect.gen(function* () {
+        const isRecap = job.deliveryKey === deliveryKey(job.environmentId, job.threadId, job.runId);
+        const settings = currentRecapSettings(config);
+        const recapAllowed = () => {
+          const current = currentRecapSettings(config);
+          return current.enabled && current.generation === settings.generation && job.createdAt >= current.enabledAt;
+        };
+        if (isRecap && job.state !== "unknown" && !recapAllowed()) {yield* store.skipRecap(job.id, true);return;}
         if (job.state === "pending") {
           if (!job.context) {
             status.modelState = "degraded";
@@ -243,6 +255,7 @@ export const runTelegramvisor = (config: TelegramvisorConfig, status: Telegramvi
             return;
           }
           const recap = yield* recapper.recap(job.context);
+          if (!recapAllowed()) {yield* store.skipRecap(job.id, true);return;}
           status.modelState = "ready";
           status.lastModelSuccessAt = new Date().toISOString();
           if (recap === null) {
@@ -269,6 +282,7 @@ export const runTelegramvisor = (config: TelegramvisorConfig, status: Telegramvi
         } else if (job.state === "ready") {
           yield* telegram.getBotInfo();
           status.telegramState = "ready";
+          if (isRecap && !recapAllowed()) {yield* store.skipRecap(job.id, true);return;}
           if (job.text === null || !(yield* store.claimSend(job.id, Date.now()))) return;
           yield* Effect.gen(function* () {
             const result = yield* telegram.sendMessage(job.deliveryKey, job.text!);
