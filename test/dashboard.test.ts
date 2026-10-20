@@ -9,18 +9,20 @@ import {createStatus} from "../src/coordinator.js";
 import {forgeDashboardToken} from "../src/service-auth.js";
 import {makeStore, Store} from "../src/store.js";
 import {ThreadPolicyStore} from "../src/thread-policy.js";
+import {RecapSettingsStore} from "../src/recap-settings.js";
 import type {T3ClientShape} from "../src/t3.js";
 import type {TelegramvisorConfig} from "../src/types.js";
 
 test("dashboard authenticates independently, fences writes and filters fresh native ownership", async () => {
   const directory = await mkdtemp(join(tmpdir(), "telegramvisor-dashboard-"));
   const policy = new ThreadPolicyStore(directory, {excludedThreadIds: [], interactiveThreadId: null});
+  const recaps = new RecapSettingsStore(directory);
   try {
     await Effect.runPromise(Effect.scoped(Effect.provide(Store.use(store => Effect.promise(async () => {
       const config: TelegramvisorConfig = {
         dataDirectory: directory, t3Url: "http://127.0.0.1:1", t3TokenFile: "unused", t3InputTokenFile: "unused",
         t3OperateTokenFile: "", mcpxUrl: "http://127.0.0.1:1", cxCommand: "unused", cxHome: directory,
-        cxSeedFile: "unused", excludedThreadIds: [], threadPolicy: policy, healthPort: 0, uiPort: 0,
+        cxSeedFile: "unused", excludedThreadIds: [], threadPolicy: policy, recapSettings: recaps, healthPort: 0, uiPort: 0,
         telegramEnabled: false, inputEnabled: false, modelTimeoutMs: 1000,
       };
       const shell = (id: string, rootThreadId = id, relationshipToParent: string | null = null) => ({
@@ -56,11 +58,25 @@ test("dashboard authenticates independently, fences writes and filters fresh nat
         assert.equal((await write({origin, "x-csrf-token": csrf}, {...original, excludedThreadIds: ["ordinary"]})).status, 200);
         assert.equal((await write({origin, "x-csrf-token": csrf}, original)).status, 409);
         assert.deepEqual(policy.get().excludedThreadIds, ["ordinary"]);
+        const recapWrite = (headers: Record<string, string>, body: unknown) => fetch(origin + "/api/recap-settings", {
+          method: "POST", headers: {"x-telegramvisor-session": session, "content-type": "application/json", ...headers}, body: JSON.stringify(body),
+        });
+        const savedRecaps = recaps.get();
+        const recapSnapshot = await (await get("/api/snapshot", session)).json() as {recapSettings: {enabled: boolean}};
+        assert.equal(recapSnapshot.recapSettings.enabled, false);
+        assert.equal((await recapWrite({origin}, {...savedRecaps, enabled: true})).status, 403);
+        assert.equal((await recapWrite({origin, "x-csrf-token": csrf}, {...savedRecaps, enabled: "true"})).status, 400);
+        assert.equal((await recapWrite({origin, "x-csrf-token": csrf}, {...savedRecaps, enabled: true})).status, 200);
+        assert.equal(recaps.get().enabled, true);
+        assert.equal((await recapWrite({origin, "x-csrf-token": csrf}, savedRecaps)).status, 409);
+        assert.equal((await recapWrite({origin, "x-csrf-token": csrf}, {...recaps.get(), enabled: false})).status, 200);
+        assert.equal(recaps.get().enabled, false);
+        assert.deepEqual(policy.get().excludedThreadIds, ["ordinary"]);
         const logout = await fetch(origin + "/auth/logout", {method: "POST", headers: {origin, "content-type": "application/json", "x-telegramvisor-session": session}, body: "{}"});
         assert.equal(logout.status, 200);
         assert.equal((await get("/api/snapshot", session)).status, 401);
         assert.equal((await get("/mcp/workflows")).status, 404);
       } finally {await dashboard.close();}
     })), makeStore(directory))));
-  } finally {policy.close();await rm(directory, {recursive: true, force: true});}
+  } finally {recaps.close();policy.close();await rm(directory, {recursive: true, force: true});}
 });
