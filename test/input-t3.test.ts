@@ -366,86 +366,96 @@ test("oversized full snapshots compose the same native revision from bounded own
   }
 });
 
-test("an exact saved item anchor reconciles an answered request omitted from the bounded control records", async () => {
-  let oversized = false;
-  let boundedReads = 0;
-  const full = makeThreadSnapshot();
-  const projection = full.projection as JsonRecord;
-  const allItems = projection.turnItems as JsonRecord[];
-  const originalItem = allItems.find((item) => item.requestId === "request-pending")!;
-  const completedItem = {
-    ...originalItem,
-    status: "completed",
-    completedAt: "2026-10-08T10:01:00.000Z",
-    updatedAt: "2026-10-08T10:01:00.000Z",
-  };
-  const emptyProjection: JsonRecord = {
-    ...projection,
-    runtimeRequests: [],
-    turnItems: [],
-    nodes: [],
-    runs: [],
-  };
-  const fullPath = `/api/orchestration/threads/${encodeURIComponent(threadId)}`;
-  const boundedPath = `${fullPath}/bounded`;
-  const server = await startMockServer((request, response) => {
-    const path = request.url ?? "";
-    if (path === "/.well-known/t3/environment") {
-      sendJson(response, 200, {
-        environmentId: "environment-1",
-        orchestrationProtocolVersion: 2,
-        serverVersion: "nightly-test",
+for (const terminalStatus of ["completed", "cancelled"] as const) {
+  for (const overflow of [false, true]) {
+    test(`an exact saved item anchor reconciles a ${terminalStatus} request omitted from ${overflow ? "bounded" : "full"} control records`, async () => {
+      let retired = false;
+      let boundedReads = 0;
+      const full = makeThreadSnapshot();
+      const projection = full.projection as JsonRecord;
+      const allItems = projection.turnItems as JsonRecord[];
+      const originalItem = allItems.find((item) => item.requestId === "request-pending")!;
+      const completedItem: JsonRecord = {
+        ...originalItem,
+        status: terminalStatus,
+        completedAt: "2026-10-08T10:01:00.000Z",
+        updatedAt: "2026-10-08T10:01:00.000Z",
+      };
+      const emptyProjection: JsonRecord = {
+        ...projection,
+        runtimeRequests: [],
+        turnItems: [],
+        nodes: [],
+        runs: [],
+      };
+      const fullPath = `/api/orchestration/threads/${encodeURIComponent(threadId)}`;
+      const boundedPath = `${fullPath}/bounded`;
+      const server = await startMockServer((request, response) => {
+        const path = request.url ?? "";
+        if (path === "/.well-known/t3/environment") {
+          sendJson(response, 200, {
+            environmentId: "environment-1",
+            orchestrationProtocolVersion: 2,
+            serverVersion: "nightly-test",
+          });
+          return;
+        }
+        if (path === "/api/orchestration/shell") {
+          sendJson(response, 200, makeShellSnapshot(100 + boundedReads, null));
+          return;
+        }
+        if (path === fullPath) {
+          if (retired && overflow) {
+            response.writeHead(413);
+            response.end();
+          } else sendJson(response, 200, retired ? { ...full, projection: emptyProjection } : full);
+          return;
+        }
+        if (path === boundedPath) {
+          boundedReads += 1;
+          sendJson(response, 200, {
+            snapshotSequence: 200 + boundedReads,
+            projection: emptyProjection,
+            historyCursor: null,
+            hasMoreHistory: false,
+            latestLocalTurnOrdinal: null,
+          });
+          return;
+        }
+        sendJson(response, 404, { message: "unmatched request" });
+      }, (_request, socket) => {
+        socket.on("message", (data) => {
+          const decoded: unknown = JSON.parse(data.toString("utf8"));
+          assert.ok(isRecord(decoded));
+          const payload = decoded.payload as JsonRecord;
+          assert.equal(payload.itemId, originalItem.id);
+          respondWith(socket, String(decoded.id), { _tag: "Success", value: { item: completedItem } });
+        });
       });
-      return;
-    }
-    if (path === "/api/orchestration/shell") {
-      sendJson(response, 200, makeShellSnapshot(100 + boundedReads, null));
-      return;
-    }
-    if (path === fullPath) {
-      if (oversized) {
-        response.writeHead(413);
-        response.end();
-      } else sendJson(response, 200, full);
-      return;
-    }
-    if (path === boundedPath) {
-      boundedReads += 1;
-      sendJson(response, 200, {
-        snapshotSequence: 200 + boundedReads,
-        projection: emptyProjection,
-        historyCursor: null,
-        hasMoreHistory: false,
-        latestLocalTurnOrdinal: null,
-      });
-      return;
-    }
-    sendJson(response, 404, { message: "unmatched request" });
-  }, (_request, socket) => {
-    socket.on("message", (data) => {
-      const decoded: unknown = JSON.parse(data.toString("utf8"));
-      assert.ok(isRecord(decoded));
-      const payload = decoded.payload as JsonRecord;
-      assert.equal(payload.itemId, originalItem.id);
-      respondWith(socket, String(decoded.id), { _tag: "Success", value: { item: completedItem } });
-    });
-  });
 
-  try {
-    const client = makeInputT3Client(clientOptions(server.baseUrl));
-    const pending = (await client.listRequests(threadId)).find((request) => request.requestId === "request-pending");
-    assert.ok(pending);
-    const previous = normalizeInputRequest(normalizeNativeInput(pending, "Input test"));
-    oversized = true;
-    const resolved = await client.readRequest(threadId, "request-pending", previous);
-    assert.equal(resolved?.terminal, true);
-    assert.equal(resolved?.status, "resolved");
-    assert.equal(resolved?.revisionHash, previous.revisionHash);
-    assert.equal(boundedReads, 2);
-  } finally {
-    await server.close();
+      try {
+        const client = makeInputT3Client(clientOptions(server.baseUrl));
+        const pending = (await client.listRequests(threadId)).find((request) => request.requestId === "request-pending");
+        assert.ok(pending);
+        const previous = normalizeInputRequest(normalizeNativeInput(pending, "Input test"));
+        retired = true;
+        const resolved = await client.readRequest(threadId, "request-pending", previous);
+        assert.equal(resolved?.terminal, true);
+        assert.equal(resolved?.status, terminalStatus === "completed" ? "resolved" : "cancelled");
+        assert.equal(resolved?.revisionHash, previous.revisionHash);
+        assert.equal(boundedReads, 2);
+
+        completedItem.status = "pending";
+        await assert.rejects(client.readRequest(threadId, "request-pending", previous), /no matching terminal item/u);
+        completedItem.status = terminalStatus;
+        completedItem.questions = [];
+        await assert.rejects(client.readRequest(threadId, "request-pending", previous), /question|terminal/u);
+      } finally {
+        await server.close();
+      }
+    });
   }
-});
+}
 
 test("resolved bounded requests require the saved owner and question revision", async () => {
   let oversized = false;

@@ -71,6 +71,11 @@ they are never reported as delivered or replayed. They do not block the worker's
 readiness. Active send uncertainty, uncertain native answers/retirements and
 uncertain deletions still block readiness, as do polling/transport failures.
 
+When a tracked question disappears from live T3 controls, its exact saved item can
+confirm either completion or cancellation. Reconciliation verifies the saved owner,
+question revision and fresh controls; a cancelled item is never treated as an answer.
+Missing, nonterminal or mismatched evidence remains unresolved.
+
 Telegram and input are independently opt-in, with the master Telegram switch taking
 precedence. Disabled workers retain their queues and uncertainty. Re-enabling resumes
 existing queued work without treating all disabled-period completions as new work.

@@ -900,7 +900,7 @@ export const makeInputT3Client = (options: InputT3ClientOptions): InputT3Client 
     if (requestValue.status === "resolved" && previous !== undefined && anchor !== undefined) {
       const savedAnchor = validateSavedAnchor(previous, environmentId, threadId, requestId);
       validateCurrentRequestAgainstAnchor(requestValue, current, savedAnchor);
-      return resolvedRequestFromAnchor(previous, environmentId, threadId, requestId, exactItem);
+      return terminalRequestFromAnchor(previous, environmentId, threadId, requestId, exactItem, "resolved");
     }
     return current;
   };
@@ -950,18 +950,20 @@ export const makeInputT3Client = (options: InputT3ClientOptions): InputT3Client 
     }
   };
 
-  const resolvedRequestFromAnchor = (
+  const terminalRequestFromAnchor = (
     previous: NativeInputRequest,
     environmentId: string,
     threadId: string,
     requestId: string,
     item: JsonRecord,
+    expectedStatus?: "resolved",
   ): InputT3Request => {
     const anchor = validateSavedAnchor(previous, environmentId, threadId, requestId);
     validateQuestionItem(item, threadId, requestId, anchor.itemId, anchor.owner);
-    if (item.status !== "completed" || canonicalJson(questionItemIdentity(item)) !==
+    const status = item.status === "completed" ? "resolved" : item.status === "cancelled" ? "cancelled" : null;
+    if (status === null || expectedStatus !== undefined && status !== expectedStatus || canonicalJson(questionItemIdentity(item)) !==
       canonicalJson(questionItemIdentity(anchor.rawTurnItem as JsonRecord))) {
-      throw new InputT3Error("T3 tracked question has no matching answered terminal item");
+      throw new InputT3Error("T3 tracked question has no matching terminal item");
     }
     const responseCapability = parseCapability(anchor.rawRequest.responseCapability);
     const resolvedAt = typeof item.completedAt === "string"
@@ -986,7 +988,7 @@ export const makeInputT3Client = (options: InputT3ClientOptions): InputT3Client 
       nodeId: anchor.owner.nodeId,
       providerTurnId: anchor.owner.providerTurnId,
       nativeRequestRef,
-      status: "resolved",
+      status,
       responseCapability,
       terminal: true,
       canRespond: false,
@@ -1025,7 +1027,7 @@ export const makeInputT3Client = (options: InputT3ClientOptions): InputT3Client 
     anchor = validateSavedAnchor(previous, environmentId, threadId, requestId);
     const exactItem = await getTurnItem(threadId, anchor.itemId);
     if (exactItem === null) throw new InputT3Error("Saved T3 question item is no longer available");
-    const resolved = resolvedRequestFromAnchor(previous, environmentId, threadId, requestId, exactItem);
+    const terminal = terminalRequestFromAnchor(previous, environmentId, threadId, requestId, exactItem);
     const { snapshot: currentSnapshot } = await readFreshBoundedContext(threadId);
     const currentRequest = findRuntimeRequest(currentSnapshot.projection, requestId);
     if (currentRequest !== undefined) {
@@ -1036,9 +1038,12 @@ export const makeInputT3Client = (options: InputT3ClientOptions): InputT3Client 
       const mapped = mapRequest(environmentId, projected, currentRequest);
       if (mapped === undefined) throw new InputT3Error("T3 tracked request changed kind during bounded reconciliation");
       validateCurrentRequestAgainstAnchor(currentRequest, mapped, anchor);
-      return currentRequest.status === "resolved" ? resolved : mapped;
+      if ((currentRequest.status === "resolved" || currentRequest.status === "cancelled") && currentRequest.status !== terminal.status) {
+        throw new InputT3Error("T3 current request conflicts with its terminal question item");
+      }
+      return currentRequest.status === "resolved" ? terminal : mapped;
     }
-    return resolved;
+    return terminal;
   };
 
   const listRequestsFromBoundedSnapshot = async (threadId: string): Promise<InputT3Request[]> => {
@@ -1296,7 +1301,7 @@ export const makeInputT3Client = (options: InputT3ClientOptions): InputT3Client 
       }
       const anchor = validateSavedAnchor(previous, environmentId, threadId, requestId);
       validateCurrentRequestAgainstAnchor(requestValue, mapped, anchor);
-      return resolvedRequestFromAnchor(previous, environmentId, threadId, requestId, mapped.native.turnItem);
+      return terminalRequestFromAnchor(previous, environmentId, threadId, requestId, mapped.native.turnItem, "resolved");
     } catch (error) {
       if (!(error instanceof InputT3ResponseTooLargeError)) throw error;
       return readRequestFromBoundedSnapshot(threadId, requestId, previous);
