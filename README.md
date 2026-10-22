@@ -75,6 +75,7 @@ When a tracked question disappears from live T3 controls, its exact saved item c
 confirm either completion or cancellation. Reconciliation verifies the saved owner,
 question revision and fresh controls; a cancelled item is never treated as an answer.
 Missing, nonterminal or mismatched evidence remains unresolved.
+T3's `status: resolved` with `decision: cancel` is cancellation, not an answered question.
 
 Telegram and input are independently opt-in, with the master Telegram switch taking
 precedence. Disabled workers retain their queues and uncertainty. Re-enabling resumes
