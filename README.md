@@ -63,6 +63,14 @@ The Compose template joins the existing MCPX network (default `lunar-mcpx_defaul
 set `MCPX_NETWORK` for another deployment. It never creates a second Telegram router.
 Health and liveness endpoints are `/health` and `/live` on port 9037.
 
+Input readiness distinguishes current uncertainty (`inputBlockingUncertain`) from
+unconfirmed sends for native-terminal, fully retired questions
+(`inputRetiredUnconfirmedSends`). Those retired sends remain in `inputUncertain`
+and History, with their original delivery keys and reconciliation/deletion window;
+they are never reported as delivered or replayed. They do not block the worker's
+readiness. Active send uncertainty, uncertain native answers/retirements and
+uncertain deletions still block readiness, as do polling/transport failures.
+
 Telegram and input are independently opt-in, with the master Telegram switch taking
 precedence. Disabled workers retain their queues and uncertainty. Re-enabling resumes
 existing queued work without treating all disabled-period completions as new work.

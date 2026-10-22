@@ -34,6 +34,8 @@ export interface TelegramvisorStatus {
   inputHeartbeat: number;
   inputRequests: number;
   inputUncertain: number;
+  inputBlockingUncertain: number;
+  inputRetiredUnconfirmedSends: number;
   inputMessages: number;
   inputPendingCleanup: number;
   inputReplyCleanupExpired: number;
@@ -54,6 +56,7 @@ export const createStatus = (config?: Pick<TelegramvisorConfig, "telegramEnabled
   lastModelSuccessAt: null, lastDeliveryAt: null, lastErrorPhase: null, store: null,
   inputState: "disabled", inputHeartbeat: Date.now(), inputRequests: 0, inputUncertain: 0,
   inputMessages: 0, inputPendingCleanup: 0, inputLastErrorPhase: null, inputCapacity: null,
+  inputBlockingUncertain: 0, inputRetiredUnconfirmedSends: 0,
 });
 
 const log = (event: string, fields: Record<string, string | number | boolean | null> = {}) =>

@@ -1117,6 +1117,7 @@ test("only old unknown sends with confirmed terminal retirement enter unconfirme
     assert.equal(stats.requests, 4);
     assert.equal(stats.pendingCleanup, 2);
     assert.equal(stats.uncertain, 4);
+    assert.equal(stats.retiredUnconfirmedSends, 1);
 
     const db = new DatabaseSync(join(directory, "telegram-input.sqlite3"), { readOnly: true });
     try {

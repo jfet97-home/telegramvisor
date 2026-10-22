@@ -194,7 +194,7 @@ export interface InputStoreApi {
   acknowledgeEvents(eventIds: readonly string[], now: number): void;
   compactTerminalPayloads(now: number): { requests: number; messages: number; events: number };
   recoverInterrupted(now: number): void;
-  stats(): { requests: number; messages: number; pendingCleanup: number; uncertain: number; capacity: InputStoreCapacity };
+  stats(): { requests: number; messages: number; pendingCleanup: number; uncertain: number; retiredUnconfirmedSends: number; capacity: InputStoreCapacity };
 }
 
 export class InputStoreError extends Error {
@@ -1557,7 +1557,7 @@ export class InputStore implements InputStoreApi {
     });
   });
 
-  stats = (): { requests: number; messages: number; pendingCleanup: number; uncertain: number; capacity: InputStoreCapacity } => this.operation(() => {
+  stats = (): { requests: number; messages: number; pendingCleanup: number; uncertain: number; retiredUnconfirmedSends: number; capacity: InputStoreCapacity } => this.operation(() => {
     const capacity: InputStoreCapacity = {
       activeRequestPayloads: this.count("SELECT COUNT(*) AS count FROM input_requests WHERE compacted=0"),
       maxRequestPayloads: maxRequests,
@@ -1580,6 +1580,11 @@ export class InputStore implements InputStoreApi {
           AND NOT (m.cleanup_state='expired' AND m.cleanup_error IS 'send_unconfirmed_expired')) +
         (SELECT COUNT(*) FROM input_messages WHERE cleanup_state='unknown') +
         (SELECT COUNT(*) FROM input_requests WHERE submission_state='unknown' OR retirement_state='unknown') AS count`),
+      // retain terminal send uncertainty for reconciliation without blocking new questions.
+      retiredUnconfirmedSends: this.count(`SELECT COUNT(*) AS count FROM input_messages m JOIN input_requests r
+        ON r.input_id=m.input_id AND r.request_revision=m.request_revision
+        WHERE m.state='unknown' AND m.message_id IS NULL AND m.is_edit=0 AND m.cleanup_state='waiting'
+          AND r.native_terminal=1 AND r.lifecycle='retired' AND r.retirement_state='sent'`),
       capacity,
     };
   });

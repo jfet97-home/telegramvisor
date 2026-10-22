@@ -72,6 +72,8 @@ export interface InputCoordinatorStatus {
   readonly messages: number;
   readonly pendingCleanup: number;
   readonly uncertain: number;
+  readonly blockingUncertain: number;
+  readonly retiredUnconfirmedSends: number;
   readonly capacity: InputStoreCapacity;
   readonly replyCleanupExpired: number;
 }
@@ -81,6 +83,9 @@ export interface InputCoordinatorApi {
   readonly run: (signal: AbortSignal) => Promise<void>;
   readonly status: () => InputCoordinatorStatus;
 }
+
+export const inputWorkerReady = (status: InputCoordinatorStatus): boolean =>
+  status.lastErrorPhase === null && status.lastCycleAt !== null && status.blockingUncertain === 0;
 
 const stableKey = (prefix: string, ...parts: string[]): string => {
   const digest = createHash("sha256").update(parts.join("\u0000")).digest("hex").slice(0, 40);
@@ -142,6 +147,7 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
     return { lastCycleAt, lastErrorPhase, ...input, replyCleanupExpired: replies?.expired ?? 0,
       pendingCleanup: input.pendingCleanup + (replies?.pending ?? 0) + (replies?.unknown ?? 0),
       uncertain: input.uncertain + (replies?.unknown ?? 0),
+      blockingUncertain: input.uncertain - input.retiredUnconfirmedSends + (replies?.unknown ?? 0),
     };
   };
 

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { makeInputId, renderInputBatch } from "../src/input-domain.js";
 import type { InputEvent, InputThread, NativeInputRequest } from "../src/input-domain.js";
-import { makeInputCoordinator } from "../src/input-coordinator.js";
+import { inputWorkerReady, makeInputCoordinator } from "../src/input-coordinator.js";
 import type { InputNativeClient, NativeResponseResult } from "../src/input-coordinator.js";
 import { INPUT_CLEANUP_UNCERTAINTY_TTL_MS, makeInputStore } from "../src/input-store.js";
 import { InputReplyCleanup } from "../src/input-reply-cleanup.js";
@@ -990,7 +990,7 @@ test("a lost send acknowledgement is recovered after native termination and clea
   });
 });
 
-test("aged retired unknown sends stay unconfirmed and stop blocking readiness without replay", async () => {
+test("retired unknown sends retain uncertainty and reconciliation without blocking the worker", async () => {
   await withHarness(async ({ native, telegram, runOnce, advance, store, status }) => {
     telegram.deferUnknownMessageRecovery = true;
     telegram.sendBehavior = () => ({ kind: "unknown", reason: "invalid_response" });
@@ -999,6 +999,8 @@ test("aged retired unknown sends stay unconfirmed and stop blocking readiness wi
     const original = store.messagesForRequest(tracked.inputId, tracked.requestRevision)
       .find((message) => message.state === "unknown")!;
     assert.equal(status().uncertain, 1);
+    assert.equal(status().blockingUncertain, 1);
+    assert.equal(inputWorkerReady(status()), false);
     assert.equal(original.messageId, null);
 
     native.requests.set("router-thread", [{ ...makeRequest(), terminal: true, terminalState: "cancelled" }]);
@@ -1007,6 +1009,14 @@ test("aged retired unknown sends stay unconfirmed and stop blocking readiness wi
     await runOnce();
     assert.equal(store.getRequest(tracked.inputId, tracked.requestRevision)?.retirementState, "sent");
     assert.equal(status().uncertain, 1);
+    assert.equal(status().retiredUnconfirmedSends, 1);
+    assert.equal(status().blockingUncertain, 0);
+    assert.equal(inputWorkerReady(status()), true);
+    const readsBefore = telegram.deliveryStatusReads.length;
+    await runOnce();
+    assert.ok(telegram.deliveryStatusReads.length > readsBefore);
+    assert.equal(telegram.sends.length, 1);
+    assert.equal(telegram.deletes.length, 0);
 
     advance(INPUT_CLEANUP_UNCERTAINTY_TTL_MS - 1);
     await runOnce();
@@ -1025,6 +1035,8 @@ test("aged retired unknown sends stay unconfirmed and stop blocking readiness wi
     assert.equal(expired.cleanupState, "expired");
     assert.equal(expired.cleanupError, "send_unconfirmed_expired");
     assert.equal(status().uncertain, 0);
+    assert.equal(status().retiredUnconfirmedSends, 0);
+    assert.equal(status().blockingUncertain, 0);
     assert.equal(telegram.sends.length, 1);
     assert.equal(telegram.deletes.length, 0);
 
@@ -1034,6 +1046,42 @@ test("aged retired unknown sends stay unconfirmed and stop blocking readiness wi
     assert.equal(telegram.inputRequestReads, requestReads);
     assert.equal(telegram.deliveryStatusReads.length, deliveryReads);
     assert.equal(telegram.sends.length, 1);
+  });
+});
+
+test("a retired unknown send does not block new input and late receipts still clean it", async () => {
+  await withHarness(async ({ native, telegram, runOnce, store, status }) => {
+    telegram.deferUnknownMessageRecovery = true;
+    telegram.sendBehavior = () => ({ kind: "unknown", reason: "invalid_response" });
+    await runOnce();
+    const tracked = store.listRequests()[0]!;
+    const original = telegram.sends[0]!;
+    telegram.forgetUnknownMessages = true;
+    telegram.statuses.set(original.deliveryKey, { state: "not_found" });
+    native.requests.set("router-thread", [{ ...makeRequest(), terminal: true, terminalState: "resolved" }]);
+    await runOnce();
+    assert.equal(inputWorkerReady(status()), true);
+    assert.equal(status().uncertain, 1);
+    assert.equal(status().retiredUnconfirmedSends, 1);
+
+    const next = makeRequest("revision-2", "request-2");
+    native.requests.set("router-thread", [next]);
+    telegram.sendBehavior = (message) => ({ kind: "sent", messageId: message.messageId });
+    await runOnce();
+    assert.equal(inputWorkerReady(status()), true);
+    assert.equal(telegram.sends.length, 2);
+    assert.equal(telegram.sends.filter(message => message.deliveryKey === original.deliveryKey).length, 1);
+    assert.equal(telegram.sends[1]?.requestRevision, "revision-2");
+    assert.equal(inputWorkerReady({ ...status(), lastErrorPhase: "telegram_input_reconcile" }), false);
+
+    telegram.statuses.set(original.deliveryKey, { state: "sent", messageId: original.messageId });
+    await runOnce();
+    assert.equal(status().uncertain, 0);
+    assert.equal(status().retiredUnconfirmedSends, 0);
+    assert.equal(inputWorkerReady(status()), true);
+    assert.equal(telegram.sends.length, 2);
+    assert.equal(telegram.deletes.filter(deletion => deletion.messageId === original.messageId).length, 1);
+    assert.equal(store.isTombstoned(tracked.inputId, tracked.requestRevision), true);
   });
 });
 
@@ -1098,7 +1146,7 @@ test("duplicate callbacks are idempotent and stale submit controls cannot submit
 });
 
 test("unknown native submissions are never blindly replayed after restart-like polling", async () => {
-  await withHarness(async ({ native, telegram, runOnce, store }) => {
+  await withHarness(async ({ native, telegram, runOnce, store, status }) => {
     await runOnce();
     const submit = await submitAllRequired({ native, telegram, runOnce });
     native.responseResults = [{ kind: "unknown", reason: "timeout" }];
@@ -1120,6 +1168,9 @@ test("unknown native submissions are never blindly replayed after restart-like p
     await runOnce();
     assert.equal(native.responseCalls.length, 1);
     assert.equal(store.getRequest(submit.inputId, submit.requestRevision)?.submissionState, "unknown");
+    assert.equal(status().blockingUncertain, 1);
+    assert.equal(status().retiredUnconfirmedSends, 0);
+    assert.equal(inputWorkerReady(status()), false);
   });
 });
 
@@ -1514,6 +1565,8 @@ test("unconfirmed obsolete deletion expires after 24 hours without replay", asyn
     await runOnce();
     const unknown = store.dueCleanupMessages(now()).find(m => m.cleanupState === "unknown")!;
     assert.ok(unknown);
+    assert.ok(status().blockingUncertain > 0);
+    assert.equal(inputWorkerReady(status()), false);
     assert.equal(store.expireUnknownDeletion(unknown.deliveryKey, now()), false);
     const count = telegram.deletes.length;
     advance(23 * 60 * 60 * 1000);

@@ -5,7 +5,7 @@ import type { InputT3Thread } from "./input-t3.js";
 import { startDashboard } from "./dashboard.js";
 import { initializeRuntimeAuth, loadConfig } from "./config.js";
 import { createStatus, runTelegramvisor } from "./coordinator.js";
-import { makeInputCoordinator } from "./input-coordinator.js";
+import { inputWorkerReady, makeInputCoordinator } from "./input-coordinator.js";
 import { makeNativeInputIntegration } from "./input-integration.js";
 import { makeInputStore } from "./input-store.js";
 import { InputReplyCleanup } from "./input-reply-cleanup.js";
@@ -58,14 +58,15 @@ const inputWorker = (token: string) => Effect.gen(function* () {
     const input = coordinator.status();
     status.inputRequests = input.requests;
     status.inputUncertain = input.uncertain;
+    status.inputBlockingUncertain = input.blockingUncertain;
+    status.inputRetiredUnconfirmedSends = input.retiredUnconfirmedSends;
     status.inputMessages = input.messages;
     status.inputPendingCleanup = input.pendingCleanup;
     status.inputReplyCleanupExpired = input.replyCleanupExpired;
     status.inputLastErrorPhase = input.lastErrorPhase;
     status.inputCapacity = input.capacity;
     status.inputHeartbeat = input.lastCycleAt ? Date.parse(input.lastCycleAt) : status.inputHeartbeat;
-    status.inputState = input.lastErrorPhase === null && input.lastCycleAt !== null && input.uncertain === 0
-      ? "ready" : "degraded";
+    status.inputState = inputWorkerReady(input) ? "ready" : "degraded";
     yield* Effect.sleep(config.inputPollMs ?? 1_000);
   }).pipe(Effect.forever);
   yield* cycle;
