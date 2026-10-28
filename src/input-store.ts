@@ -8,6 +8,7 @@ import {
   InputDomainError,
   inputDefinitionHash,
   isInputBatchComplete,
+  isInputNotification,
   makeInputId,
   nativeInputAnswers,
   type InputPresentation,
@@ -794,12 +795,12 @@ export class InputStore implements InputStoreApi {
       }
       let previousCard: InputMessageRecord | null = null;
       for (const item of [...allRows].sort((left, right) => right.generation - left.generation || left.ordinal - right.ordinal)) {
-        if (item.state === "sent" && item.messageId !== null && item.cleanupState === "none") {
+        if (item.state === "sent" && item.messageId !== null && item.cleanupState === "none" && !isInputNotification(item)) {
           previousCard = item;
           break;
         }
       }
-      if (previousCard === null && allRows.some((item) => item.messageId !== null &&
+      if (previousCard === null && allRows.some((item) => !isInputNotification(item) && item.messageId !== null &&
         item.cleanupState !== "deleted" && item.cleanupState !== "expired")) return null;
       const generation = request.currentGeneration + 1;
       const deliveryKey = stableKey(

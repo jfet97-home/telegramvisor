@@ -2,14 +2,15 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { makeInputId, renderInputBatch } from "../src/input-domain.js";
 import type { InputEvent, InputThread, NativeInputRequest } from "../src/input-domain.js";
 import { inputWorkerReady, makeInputCoordinator } from "../src/input-coordinator.js";
-import type { InputNativeClient, NativeResponseResult } from "../src/input-coordinator.js";
+import type { InputCoordinatorDependencies, InputNativeClient, NativeResponseResult } from "../src/input-coordinator.js";
 import { INPUT_CLEANUP_UNCERTAINTY_TTL_MS, makeInputStore } from "../src/input-store.js";
 import { InputReplyCleanup } from "../src/input-reply-cleanup.js";
-import { initialInputPresentation, renderInputCard } from "../src/input-ui.js";
+import { initialInputPresentation } from "../src/input-ui.js";
 import { makeInputTelegramClient } from "../src/input-telegram.js";
 import type {
   InputDeliveryStatus,
@@ -192,13 +193,14 @@ const withHarness = async <A>(
   run: (args: {
     native: FakeNative;
     telegram: FakeTelegram;
+    directory: string;
     now: () => number;
     advance: (milliseconds: number) => void;
-    runOnce: () => Promise<void>;
+    runOnce: (forceDiscovery?: boolean) => Promise<void>;
     status: () => ReturnType<ReturnType<typeof makeInputCoordinator>["status"]>;
     store: ReturnType<typeof makeInputStore>;
   }) => Promise<A>,
-  policy: { routerOnlyInput?: boolean; interactiveThreadId?: string; excludedThreadIds?: readonly string[]; readThreadPolicy?: () => { excludedThreadIds: string[]; interactiveThreadId: string | null } } = {},
+  policy: Pick<InputCoordinatorDependencies, "excludedThreadIds" | "readThreadPolicy"> = {},
 ): Promise<A> => {
   const directory = await mkdtemp(join(tmpdir(), "t3-input-coordinator-"));
   const native = new FakeNative();
@@ -209,7 +211,7 @@ const withHarness = async <A>(
   const store = makeInputStore(directory);
   const replyCleanup = new InputReplyCleanup(directory);
   const coordinator = makeInputCoordinator({ store, replyCleanup, telegram, native, now, pollIntervalMs: 100, ...policy });
-  try { return await run({ native, telegram, now, advance, runOnce: coordinator.runOnce, status: coordinator.status, store }); }
+  try { return await run({ native, telegram, directory, now, advance, runOnce: coordinator.runOnce, status: coordinator.status, store }); }
   finally {
     store.close();
     replyCleanup.close();
@@ -219,52 +221,32 @@ const withHarness = async <A>(
 
 const allViews = (telegram: FakeTelegram): SentMessage[] => [...telegram.sends, ...telegram.edits];
 
-test("excluded chats do not produce input notices while the explicit router remains interactive", async () => {
+test("excluded ordinary chats and the excluded current router stay silent", async () => {
   await withHarness(async ({ native, telegram, store, runOnce }) => {
-    native.threads.push({ id: "teams-thread", kind: "main", active: true });
-    native.requests.set("teams-thread", [{ ...makeRequest(), threadId: "teams-thread" }]);
+    native.threads.push({ id: "excluded-thread", active: true, kind: "main" });
+    native.requests.set("excluded-thread", [{ ...makeRequest(), threadId: "excluded-thread" }]);
     await runOnce();
-    assert.ok(!native.listRequestCalls.includes("teams-thread"));
-    assert.equal(store.getRequest(makeInputId("environment-1", "teams-thread", "request-1"), "revision-1"), null);
-    assert.equal(telegram.sends.length, 1);
-    assert.equal(telegram.sends[0]!.inputId, makeInputId("environment-1", "router-thread", "request-1"));
-    assert.ok(telegram.sends[0]!.message.buttons.length > 0);
-  }, { routerOnlyInput: true, interactiveThreadId: "router-thread", excludedThreadIds: ["router-thread", "teams-thread"] });
+    assert.deepEqual(native.listRequestCalls, []);
+    assert.deepEqual(store.listRequests(), []);
+    assert.equal(telegram.sends.length, 0);
+  }, { excludedThreadIds: ["router-thread", "excluded-thread"] });
 });
 
-test("saved forms from an excluded chat are retired without answering its native request", async () => {
-  await withHarness(async ({ native, telegram, store, now, runOnce }) => {
-    const request = { ...makeRequest(), threadId: "teams-thread" };
-    native.threads.push({ id: "teams-thread", kind: "main", active: true });
-    native.requests.set("teams-thread", [request]);
-    const tracked = store.upsertRequest("environment-1", request, now());
-    const message = store.ensurePresentation(tracked.inputId, request.revisionHash, 0, 0,
-      initialInputPresentation(), renderInputCard({ request, answers: {}, presentation: initialInputPresentation(), draftRevision: 0, presentationRevision: 0 }), now())!;
-    store.beginMessageSend(message.deliveryKey, now());
-    store.recordMessagePresented(message.deliveryKey, 999, now(), null, null);
-    telegram.inbox = [{ eventId: "excluded-submit", updateId: 10, messageId: 999,
-      inputId: tracked.inputId, requestRevision: request.revisionHash, draftRevision: 0,
-      questionId: null, action: "submit", deliveryKey: message.deliveryKey }];
-    await runOnce();
-    assert.equal(native.responseCalls.length, 0);
-    assert.ok(!native.readCalls.some((call) => call.startsWith("teams-thread:")));
-    assert.ok(telegram.deletes.some((deleted) => deleted.messageId === 999));
-    assert.equal(telegram.inbox.length, 0);
-    assert.notEqual(store.getRequest(tracked.inputId, request.revisionHash)?.lifecycle, "active");
-  }, { excludedThreadIds: ["teams-thread"] });
-});
-
-test("nonexcluded chats still produce plain input-needed notices", async () => {
+test("all ordinary chats receive interactive cards without a selected router", async () => {
   await withHarness(async ({ native, telegram, runOnce }) => {
-    native.threads.push({ id: "other-thread", kind: "main", active: true });
-    native.requests.set("other-thread", [{ ...makeRequest(), threadId: "other-thread", displayTitle: "Another chat" }]);
-    const inputId = makeInputId("environment-1", "other-thread", "request-1");
-    telegram.notificationRequest = { inputId, requestRevision: "revision-1", draftRevision: 0 };
+    native.currentRouterThreadId = null;
+    for (const id of ["first-thread", "second-thread"]) {
+      native.threads.push({ id, kind: "main", active: true });
+      native.requests.set(id, [{ ...makeRequest(), threadId: id, displayTitle: id }]);
+    }
     await runOnce();
-    const notice = telegram.sends.find((message) => message.inputId === inputId)!;
-    assert.match(notice.message.text, /Input needed in: Another chat/u);
-    assert.deepEqual(notice.message.buttons, []);
-  }, { routerOnlyInput: true, interactiveThreadId: "router-thread", excludedThreadIds: ["router-thread", "teams-thread"] });
+    for (const id of ["router-thread", "first-thread", "second-thread"]) {
+      const message = telegram.sends.find((message) => message.inputId === makeInputId("environment-1", id, "request-1"))!;
+      assert.ok(message.message.buttons.length > 0);
+      assert.equal(message.message.questionId, "single");
+    }
+    assert.equal(telegram.sends.length, 3);
+  });
 });
 
 const currentQuestionMessage = (telegram: FakeTelegram, questionId: string, inputId = makeInputId("environment-1", "router-thread", "request-1"), revision = "revision-1") =>
@@ -298,6 +280,26 @@ const submitCallback = (sent: SentMessage, eventId: string, updateId: number): O
   void ignored;
   return submit;
 };
+
+test("saved exclusions retire existing cards and reject pending answers on the next fast cycle", async () => {
+  let policy = { excludedThreadIds: [] as string[] };
+  await withHarness(async ({ native, telegram, store, runOnce }) => {
+    await runOnce();
+    const question = currentQuestionMessage(telegram, "single");
+    policy = { excludedThreadIds: ["router-thread"] };
+    telegram.inbox = [callback(question, { eventId: "excluded-answer", action: "answer", text: "must not submit", contributionId: "2001" })];
+    native.readCalls = [];
+    await runOnce(false);
+    assert.equal(telegram.sends.length, 1);
+    assert.equal(telegram.edits.length, 0);
+    assert.equal(native.responseCalls.length, 0);
+    assert.deepEqual(native.readCalls, []);
+    assert.equal(telegram.inbox.length, 0);
+    assert.notEqual(store.getRequest(question.inputId, question.requestRevision)?.lifecycle, "active");
+    assert.ok(telegram.deletes.some(message => message.messageId === question.messageId));
+    assert.ok(!telegram.deletes.some(message => message.messageId === 2001));
+  }, { readThreadPolicy: () => policy });
+});
 
 const navigate = (sent: SentMessage, value: string, eventId: string, updateId: number): InputEvent => callback(sent, {
   eventId,
@@ -530,50 +532,55 @@ test("one Telegram card navigates questions, edits, review, and submit without c
   });
 });
 
-test("saved prepared and rejected other-chat forms become plain notifications without publishing questions", async () => {
-  for (const state of ["prepared", "rejected"] as const) {
-    await withHarness(async ({ native, telegram, store, now, runOnce }) => {
+test("retained plain notices become fresh registered cards without reusing generic message IDs", async () => {
+  for (const state of ["prepared", "rejected", "sent", "unknown", "unknown_edit"] as const) {
+    await withHarness(async ({ native, telegram, store, directory, now, runOnce }) => {
+      native.requests.clear();
       const request = { ...makeRequest(), threadId: "other-thread", displayTitle: "Another chat" };
       native.threads.push({ id: "other-thread", active: true, kind: "main" });
       native.requests.set("other-thread", [request]);
       const tracked = store.upsertRequest("environment-1", request, now());
-      telegram.notificationRequest = { inputId: tracked.inputId, requestRevision: request.revisionHash, draftRevision: 0 };
-      const old = store.ensurePresentation(tracked.inputId, request.revisionHash, 0, 0, initialInputPresentation(),
-        renderInputCard({ request, answers: {}, presentation: initialInputPresentation(), draftRevision: 0, presentationRevision: 0 }), now())!;
-      if (state === "rejected") {
+      const old = store.ensurePresentation(tracked.inputId, request.revisionHash, 0, 0, initialInputPresentation(), {
+        questionId: null, fragment: 0, text: "Input needed in: Another chat\nOpen it in T3.", buttons: [],
+      }, now())!;
+      if (state !== "prepared") {
         store.beginMessageSend(old.deliveryKey, now());
-        store.recordMessageRejected(old.deliveryKey, "rate_limit", now(), 60_000);
+        if (state === "rejected") store.recordMessageRejected(old.deliveryKey, "rate_limit", now(), 60_000);
+        else if (state === "sent") store.recordMessagePresented(old.deliveryKey, 777, now());
+        else {
+          if (state === "unknown_edit") {
+            const db = new DatabaseSync(join(directory, "telegram-input.sqlite3"));
+            try { db.prepare("UPDATE input_messages SET is_edit=1,message_id=777 WHERE delivery_key=?").run(old.deliveryKey); }
+            finally { db.close(); }
+          }
+          store.recordMessageUnknown(old.deliveryKey, "lost_ack", now());
+          telegram.statuses.set(old.deliveryKey, { state: "not_found" });
+          await runOnce();
+          assert.equal(telegram.sends.length, 0);
+          assert.equal(telegram.edits.length, 0);
+          assert.equal(telegram.inputRequestReads, 0);
+          assert.equal(store.getRequest(tracked.inputId, request.revisionHash)?.lifecycle, "active");
+          assert.equal(store.messagesForRequest(tracked.inputId, request.revisionHash).find(row => row.deliveryKey === old.deliveryKey)?.state, "unknown");
+          telegram.statuses.set(old.deliveryKey, { state: "sent", messageId: 777 });
+        }
       }
       await runOnce();
-      const notices = allViews(telegram).filter((message) => message.inputId === tracked.inputId);
-      assert.equal(notices.length, 1);
-      assert.match(notices[0]!.message.text, /^Input needed in: Another chat/u);
-      assert.deepEqual(notices[0]!.message.buttons, []);
-      assert.equal(store.messagesForRequest(tracked.inputId, request.revisionHash).find((row) => row.deliveryKey === old.deliveryKey)?.state, "abandoned");
+      const cards = allViews(telegram).filter(message => message.inputId === tracked.inputId);
+      assert.equal(cards.length, 1);
+      assert.ok(cards[0]!.message.buttons.length > 0);
+      assert.equal(cards[0]!.message.questionId, "single");
+      assert.notEqual(cards[0]!.messageId, 777);
+      assert.notEqual(cards[0]!.deliveryKey, old.deliveryKey);
+      assert.equal(telegram.edits.length, 0);
       assert.equal(native.responseCalls.length, 0);
-    }, { routerOnlyInput: true, interactiveThreadId: "router-thread" });
+      assert.equal(store.getRequest(tracked.inputId, request.revisionHash)?.lifecycle, "active");
+      if (state === "sent" || state.startsWith("unknown")) {
+        assert.ok(telegram.deletes.some(message => message.messageId === 777));
+      } else {
+        assert.equal(store.messagesForRequest(tracked.inputId, request.revisionHash).find(row => row.deliveryKey === old.deliveryKey)?.state, "abandoned");
+      }
+    });
   }
-});
-
-test("unknown plain notification edits recover through their original generic ledger key", async () => {
-  await withHarness(async ({ native, telegram, store, now, runOnce }) => {
-    const request = { ...makeRequest(), threadId: "other-thread", displayTitle: "Another chat" };
-    native.threads.push({ id: "other-thread", active: true, kind: "main" });
-    native.requests.set("other-thread", [request]);
-    const inputId = makeInputId("environment-1", "other-thread", "request-1");
-    telegram.notificationRequest = { inputId, requestRevision: request.revisionHash, draftRevision: 0 };
-    await runOnce();
-    const tracked = store.getRequest(inputId, request.revisionHash)!;
-    const old = telegram.sends.find((message) => message.inputId === inputId)!;
-    const edit = store.ensurePresentation(inputId, request.revisionHash, tracked.draftRevision, tracked.presentationRevision,
-      tracked.presentation, { ...old.message, text: "Input needed in: Renamed chat\nOpen it in T3.", buttons: [] }, now(), true)!;
-    assert.equal(edit.messageId, old.messageId);
-    telegram.sendBehavior = (message) => message.inputId === inputId ? { kind: "unknown", reason: "lost_ack" } : { kind: "sent", messageId: message.messageId };
-    await runOnce();
-    assert.ok(telegram.deliveryStatusReads.includes(edit.deliveryKey));
-    assert.equal(store.messagesForRequest(inputId, request.revisionHash).find((message) => message.deliveryKey === edit.deliveryKey)?.state, "sent");
-    assert.equal(telegram.inputRequestReads, 0);
-  }, { routerOnlyInput: true, interactiveThreadId: "router-thread" });
 });
 
 test("cancelled native input preserves unsubmitted owner replies while resolved input cleans them", async () => {
@@ -591,29 +598,46 @@ test("cancelled native input preserves unsubmitted owner replies while resolved 
   }
 });
 
-test("only the configured Telegram chat gets a form while other chats get input notifications", async () => {
-  await withHarness(async ({ native, telegram, runOnce }) => {
-    native.currentRouterThreadId = null;
-    native.threads.push({ id: "other-thread", active: true, kind: "main" });
-    native.requests.set("other-thread", [{ ...makeRequest(), threadId: "other-thread", displayTitle: "Another chat" }]);
-    telegram.notificationRequest = { inputId: makeInputId("environment-1", "other-thread", "request-1"), requestRevision: "revision-1", draftRevision: 0 };
+test("simultaneous chats keep choices and quoted answers isolated across a main-chat reset", async () => {
+  await withHarness(async ({ native, telegram, store, runOnce }) => {
+    native.requests.clear();
+    const ids = ["first-thread", "second-thread"];
+    for (const id of ids) {
+      native.threads.push({ id, active: true, kind: "main" });
+      native.requests.set(id, [{ ...makeRequest(), threadId: id, displayTitle: id, questions: [makeRequest().questions[0]!] }]);
+    }
+    const [firstId, secondId] = ids.map(id => makeInputId("environment-1", id, "request-1")) as [string, string];
     await runOnce();
-    const notification = telegram.sends.find((message) => message.inputId === makeInputId("environment-1", "other-thread", "request-1"))!;
-    assert.match(notification.message.text, /Input needed in: Another chat/u);
-    assert.ok(!notification.message.text.includes("Choose one"));
-    assert.deepEqual(notification.message.buttons, []);
-    assert.equal(notification.message.questionId, null);
-    assert.ok(currentQuestionMessage(telegram, "single").message.buttons.length > 0);
-    telegram.inbox = [submitCallback(notification, "notification-submit", 1)];
+    const first = currentQuestionMessage(telegram, "single", firstId);
+    const second = currentQuestionMessage(telegram, "single", secondId);
+    telegram.inbox = [callback(first, { eventId: "forged-cross-chat", messageId: second.messageId, deliveryKey: second.deliveryKey })];
     await runOnce();
-    telegram.inbox = [submitCallback(notification, "notification-submit", 1)];
+    assert.deepEqual(store.getRequest(firstId, "revision-1")?.answers, {});
+    telegram.inbox = [
+      callback(first, { eventId: "first-choice", updateId: 2, value: "b" }),
+      callback(second, { eventId: "second-text", updateId: 3, action: "answer", text: "second chat answer", contributionId: "2001" }),
+    ];
     await runOnce();
-    assert.equal(native.responseCalls.length, 0);
-    assert.equal(telegram.sends.filter((message) => message.inputId === notification.inputId).length, 1);
-    native.requests.set("other-thread", []);
+    assert.equal(store.getRequest(firstId, "revision-1")?.answers.single?.value, "b");
+    assert.equal(store.getRequest(secondId, "revision-1")?.answers.single?.value, "second chat answer");
+    native.currentRouterThreadId = "replacement-main";
+    native.threads = native.threads.filter(thread => thread.id !== "router-thread");
+    native.threads.push({ id: "replacement-main", kind: "main", currentRouter: true });
+    telegram.inbox = [
+      review(currentQuestionMessage(telegram, "single", firstId), "first-review", 4),
+      review(currentQuestionMessage(telegram, "single", secondId), "second-review", 5),
+    ];
     await runOnce();
-    assert.ok(telegram.deletes.some((message) => message.messageId === notification.messageId));
-  }, { routerOnlyInput: true, interactiveThreadId: "router-thread" });
+    telegram.inbox = [
+      submitCallback(currentReviewMessage(telegram, firstId), "first-submit", 6),
+      submitCallback(currentReviewMessage(telegram, secondId), "second-submit", 7),
+    ];
+    await runOnce();
+    assert.deepEqual(native.responseCalls, [
+      { threadId: "first-thread", requestId: "request-1", answers: { single: "b" } },
+      { threadId: "second-thread", requestId: "request-1", answers: { single: "second chat answer" } },
+    ]);
+  });
 });
 
 test("questionnaire reply cleanup waits for acceptance and includes superseded answers", async () => {
@@ -1541,19 +1565,18 @@ test("submit from a complete older draft is rejected after a later answer revisi
 });
 
 
-test("saved exclusion changes retire active input notices without restarting", async () => {
-  let policy = { excludedThreadIds: [] as string[], interactiveThreadId: null };
+test("an ordinary chat remains interactive after its main-chat designation disappears", async () => {
   await withHarness(async ({ native, telegram, runOnce, store }) => {
-    native.threads[0] = { id: "router-thread", active: true, kind: "main" };
-    telegram.notificationRequest = { inputId: makeInputId("environment-1", "router-thread", "request-1"), requestRevision: "revision-1", draftRevision: 0 };
     await runOnce();
     const tracked = store.listRequests()[0]!;
-    assert.equal(telegram.sends.length, 1);
-    policy = { ...policy, excludedThreadIds: [tracked.threadId] };
+    native.currentRouterThreadId = null;
+    native.threads[0] = { id: "router-thread", active: true, kind: "main" };
+    telegram.inbox = [callback(currentQuestionMessage(telegram, "single"), { eventId: "after-reset", value: "b" })];
     await runOnce();
-    assert.notEqual(store.getRequest(tracked.inputId, tracked.requestRevision)?.lifecycle, "active");
+    assert.equal(store.getRequest(tracked.inputId, tracked.requestRevision)?.lifecycle, "active");
+    assert.equal(store.getRequest(tracked.inputId, tracked.requestRevision)?.answers.single?.value, "b");
     assert.equal(telegram.sends.length, 1);
-  }, { routerOnlyInput: true, readThreadPolicy: () => policy });
+  });
 });
 
 test("unconfirmed obsolete deletion expires after 24 hours without replay", async () => {

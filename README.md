@@ -6,7 +6,7 @@ Telegram communication for T3, independently of project and workflow supervision
 - Exact full answers to messages routed from Telegram.
 - Input-needed notifications and native questionnaires with buttons or text replies.
 - Receipt reactions, answer drafts, submission and cleanup across both interfaces.
-- Per-chat exclusions and one selected interactive questionnaire chat.
+- Interactive questionnaires from every non-excluded ordinary T3 chat.
 - Notification history, delivery status and explicit recovery updates.
 
 Telegramvisor uses unmodified T3 APIs and the existing MCPX Telegram bridge.
@@ -20,8 +20,10 @@ The portable [usage skill](skills/use-telegramvisor/SKILL.md) covers dashboard
 history, chat policy, questionnaires and recovery requests.
 
 The default dashboard is http://127.0.0.1:9038. History shows retained notification,
-questionnaire and cleanup outcomes. Chats controls exclusions and the one interactive
-questionnaire chat. These exclusions control Telegram communication; workflow
+questionnaire and cleanup outcomes. Chats controls notification exclusions. Questions
+from every non-excluded ordinary T3 chat can be answered in the same Telegram bot
+chat. No main chat selection is required. Excluded chats receive no recaps, full
+replies or questions; workflow
 supervision has its own independent exclusions. Recovery can ask an eligible chat for a fresh assessment when
 historical completion coverage is incomplete; currently one request per chat is
 retained. A fresh answer does not reconstruct an old notification.

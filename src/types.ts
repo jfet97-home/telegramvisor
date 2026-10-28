@@ -124,7 +124,6 @@ export interface TelegramvisorConfig {
   telegramEnabled?: boolean;
   inputEnabled?: boolean;
   inputPollMs?: number;
-  inputInteractiveThreadId?: string;
   uiPort: number;
   uiHost?: string;
   uiAssetsDirectory?: string;

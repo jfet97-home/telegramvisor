@@ -1,6 +1,6 @@
 ---
 name: use-telegramvisor
-description: Use an existing Telegramvisor dashboard to inspect notification history, select the interactive questionnaire chat, manage Telegram exclusions or request a fresh recovery update; explain questionnaire replies and cleanup. For product usage, not source maintenance or deployment.
+description: Use an existing Telegramvisor dashboard to inspect notification history, manage Telegram notification exclusions or request a fresh recovery update; explain questionnaire replies from any T3 chat and cleanup. For product usage, not source maintenance or deployment.
 ---
 
 # Use Telegramvisor
@@ -44,11 +44,11 @@ Change it only when requested. Enabling starts with new completions and does not
 replay queued recaps or work completed while disabled. Full replies to Telegram
 messages, questionnaires and input-needed notices continue independently.
 
-Chats selects one interactive questionnaire conversation and independent exclusions
-for Telegram communication. Other eligible ordinary chats receive input-needed
-notices. The selected interactive chat can receive questionnaires even when listed
-as excluded; the page explains this exception. No selected chat means no interactive
-questionnaire target, not disabled input-needed alerts for every other chat.
+Chats manages Telegram exclusions for recaps, full replies and questions. Every
+non-excluded ordinary T3 chat can send interactive questionnaires to the same
+Telegram bot chat. No main or interactive chat selection is needed, so resetting
+the main chat does not change where another chat's answers go. Excluding a chat
+retires its existing question cards and prevents their answers from being submitted.
 
 Change only the requested choices, review the draft and choose Save chat settings.
 Drafts survive section navigation. Discard draft restores the latest saved settings.
@@ -59,8 +59,9 @@ Supervisor policy or disable its workflows.
 ## Answering questionnaires
 
 The owner answers using the Telegram card's buttons or Reply to the registered
-question. A plain input-needed notice is not an interactive card and cannot answer
-another chat's native request. Read [questionnaire replies](references/questionnaires.md)
+question. Each card identifies its source T3 chat; answers stay with that request
+when several chats have pending questions. A retained plain input-needed notice is
+not an interactive card. Read [questionnaire replies](references/questionnaires.md)
 for text, selection, review/submission, stale cards and cleanup behavior.
 
 ## Recovery

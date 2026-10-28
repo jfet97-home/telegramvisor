@@ -82,10 +82,10 @@ export const makeNativeInputIntegration = (options: InputT3ClientOptions & {isMa
       threads.clear();
       for (const thread of listed) threads.set(thread.id, thread);
       for (const id of cache.keys()) if (!threads.has(id)) cache.delete(id);
-      return listed.map((thread): InputThread => ({
+      return listed.filter((thread) => options.isManagedThread?.(thread) !== true).map((thread): InputThread => ({
         id: thread.id,
         rootThreadId: thread.lineage.rootThreadId,
-        active: options.isManagedThread?.(thread) !== true,
+        active: true,
         archived: thread.archived === true || thread.archivedAt != null,
         deleted: thread.deletedAt != null,
         delegated: thread.lineage.relationshipToParent === "subagent",

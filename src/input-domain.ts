@@ -153,6 +153,10 @@ export class InputDomainError extends Error {
   }
 }
 
+/** Identifies retained plain notices that were sent outside the questionnaire registry. */
+export const isInputNotification = (message: Pick<RenderedInputMessage, "text" | "questionId" | "buttons">): boolean =>
+  message.questionId === null && message.buttons.length === 0 && message.text.startsWith("Input needed in: ");
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 

@@ -11,6 +11,7 @@ const configVariables = [
   "MCPX_URL",
   "TELEGRAM_ENABLED",
   "INPUT_ENABLED",
+  "INPUT_INTERACTIVE_THREAD_ID",
   "UI_PORT",
   "HEALTH_PORT",
   "MANAGED_THREAD_IDS_FILE",
@@ -23,6 +24,7 @@ test("configuration keeps standalone ports, native credentials and master Telegr
     process.env.DATA_DIRECTORY = "/tmp/telegramvisor-config-test";
     process.env.TELEGRAM_ENABLED = "true";
     process.env.INPUT_ENABLED = "true";
+    process.env.INPUT_INTERACTIVE_THREAD_ID = "retired-main-chat";
     process.env.MANAGED_THREAD_IDS_FILE = " /tmp/telegramvisor-config-test/managed-thread-ids.json ";
 
     const enabled = loadConfig();
@@ -30,6 +32,7 @@ test("configuration keeps standalone ports, native credentials and master Telegr
     assert.equal(enabled.uiPort, 9038);
     assert.equal(enabled.telegramEnabled, true);
     assert.equal(enabled.inputEnabled, true);
+    assert.equal("inputInteractiveThreadId" in enabled, false);
     assert.equal(enabled.t3InputTokenFile, "/run/secrets/t3-input-token");
     assert.equal(enabled.t3OperateTokenFile, "/run/secrets/t3-operate-token");
     assert.equal(enabled.managedThreadIdsFile, "/tmp/telegramvisor-config-test/managed-thread-ids.json");

@@ -86,7 +86,7 @@ test("managed thread filtering receives and preserves the native root thread id"
           projectId: "project-1",
           lineage: {
             parentThreadId: "supervisor-root:root-id",
-            relationshipToParent: "subagent",
+            relationshipToParent: "fork",
             rootThreadId,
           },
           pendingRuntimeRequest: null,
@@ -117,16 +117,7 @@ test("managed thread filtering receives and preserves the native root thread id"
     });
     const threads = await integration.listThreads();
     assert.equal(callbackRoot, rootThreadId);
-    assert.deepEqual(threads, [{
-      id: "helper-thread",
-      rootThreadId,
-      active: false,
-      archived: false,
-      deleted: false,
-      delegated: true,
-      relationshipToParent: "subagent",
-      kind: "main",
-    }]);
+    assert.deepEqual(threads, []);
     await assert.rejects(
       integration.respond("helper-thread", "request-1", { answer: "value" }),
       /Supervisor input is not forwarded or answered\./u,

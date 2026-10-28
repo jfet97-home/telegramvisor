@@ -4,7 +4,7 @@ import {CompletionCoverage} from "./completion-coverage.js";
 import {clearAccess, getCsrfToken, getSessionToken, loadAccess, sessionHeaders, setSessionToken} from "./access.js";
 import "./style.css";
 
-type Policy = {generation: number; excludedThreadIds: string[]; interactiveThreadId: string | null};
+type Policy = {generation: number; excludedThreadIds: string[]};
 type RecapSettings = {generation: number; enabled: boolean; enabledAt: number};
 type Activity = {id: string; kind: string; threadId: string | null; state: string; reason: string | null; detail: string | null; createdAt: number};
 type Snapshot = {
@@ -35,7 +35,7 @@ function ChatSettings({data, draft, onDraft}: {data: Snapshot; draft: Policy | n
   const [error, setError] = useState("");
   useEffect(() => {if (!dirty) setForm(data.threadPolicy);}, [data.threadPolicy, dirty]);
   const chats = [...data.threads];
-  for (const id of [...form.excludedThreadIds, ...(form.interactiveThreadId ? [form.interactiveThreadId] : [])]) {
+  for (const id of form.excludedThreadIds) {
     if (!chats.some(chat => chat.id === id)) chats.push({id, title: "Unavailable chat"});
   }
   const change = (patch: Partial<Policy>) => {const next = {...form, ...patch};setForm(next);onDraft(next);setDirty(true);setMessage("");setError("");};
@@ -46,14 +46,9 @@ function ChatSettings({data, draft, onDraft}: {data: Snapshot; draft: Policy | n
       .finally(() => setBusy(false));
   }}>
     <h2>Chat settings</h2>
-    <label htmlFor="interactive-chat">Interactive questionnaire chat</label>
-    <select id="interactive-chat" name="interactiveThreadId" value={form.interactiveThreadId ?? ""} onChange={event => change({interactiveThreadId: event.target.value || null})}>
-      <option value="">None</option>
-      {chats.map(chat => <option key={chat.id} value={chat.id}>{chat.title}</option>)}
-    </select>
-    <p className="muted">This chat can answer questionnaires through Telegram, including when excluded below. Other eligible chats receive an input-needed notice.</p>
-    <fieldset className="stack"><legend>Excluded chats</legend>
-      <p>Excluded chats receive no new recaps, full replies or input-needed notices.</p>
+    <p className="muted">Answer questions from any non-excluded T3 chat in your Telegram bot chat. Reply to the question card for the chat you want to answer.</p>
+    <fieldset className="stack" aria-describedby="chat-exclusions-help"><legend>Excluded chats</legend>
+      <p id="chat-exclusions-help">Excluded chats receive no new recaps, full replies or questions. Existing question cards are retired when a chat is excluded.</p>
       <label htmlFor="chat-search">Find a chat</label>
       <input id="chat-search" name="search" type="search" autoCapitalize="none" spellCheck={false} value={search} onChange={event => setSearch(event.target.value)}/>
       <div className="chat-list">{chats.filter(chat => `${chat.title} ${chat.id}`.toLowerCase().includes(search.toLowerCase()))

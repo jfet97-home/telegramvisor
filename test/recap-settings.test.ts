@@ -8,7 +8,7 @@ import { ThreadPolicyStore } from "../src/thread-policy.js";
 
 test("recaps default off on existing installations and persist independently of chat drafts", async () => {
   const directory = await mkdtemp(join(tmpdir(), "recap-settings-"));
-  const chats = new ThreadPolicyStore(directory, {excludedThreadIds: ["excluded"], interactiveThreadId: "interactive"});
+  const chats = new ThreadPolicyStore(directory, {excludedThreadIds: ["excluded"]});
   let recaps = new RecapSettingsStore(directory);
   try {
     const draft = chats.get();
@@ -28,6 +28,5 @@ test("recaps default off on existing installations and persist independently of 
     const reenabled = recaps.save({generation: disabled.generation, enabled: true});
     assert.ok(reenabled.enabledAt >= enabled.enabledAt);
     assert.deepEqual(chats.get().excludedThreadIds, ["other"]);
-    assert.equal(chats.get().interactiveThreadId, "interactive");
   } finally {recaps.close();chats.close();await rm(directory, {recursive: true, force: true});}
 });

@@ -35,7 +35,6 @@ const inputWorker = (token: string) => Effect.gen(function* () {
   const coordinator = makeInputCoordinator({
     store,
     replyCleanup,
-    routerOnlyInput: true,
     readThreadPolicy: () => config.threadPolicy!.get(),
     excludedThreadIds: config.excludedThreadIds,
     native: makeNativeInputIntegration({
@@ -86,7 +85,6 @@ const app = Effect.gen(function* () {
   config.threadPolicy = yield* Effect.acquireRelease(
     Effect.sync(() => new ThreadPolicyStore(config.dataDirectory, {
       excludedThreadIds: config.excludedThreadIds,
-      interactiveThreadId: config.inputInteractiveThreadId ?? null,
     })),
     (store) => Effect.sync(() => store.close()),
   );

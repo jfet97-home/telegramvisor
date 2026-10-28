@@ -15,7 +15,7 @@ import type {TelegramvisorConfig} from "../src/types.js";
 
 test("dashboard authenticates independently, fences writes and filters fresh native ownership", async () => {
   const directory = await mkdtemp(join(tmpdir(), "telegramvisor-dashboard-"));
-  const policy = new ThreadPolicyStore(directory, {excludedThreadIds: [], interactiveThreadId: null});
+  const policy = new ThreadPolicyStore(directory, {excludedThreadIds: []});
   const recaps = new RecapSettingsStore(directory);
   try {
     await Effect.runPromise(Effect.scoped(Effect.provide(Store.use(store => Effect.promise(async () => {
