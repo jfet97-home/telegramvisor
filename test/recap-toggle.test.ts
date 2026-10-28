@@ -28,7 +28,7 @@ const withCoordinator = async (run: (store: StoreShape, settings: RecapSettingsS
       await run(store, settings, async (recapper, telegram) => {
         const config: TelegramvisorConfig = {
           dataDirectory: directory, t3Url: "unused", t3TokenFile: "unused", t3InputTokenFile: "unused", t3OperateTokenFile: "unused",
-          mcpxUrl: "unused", cxCommand: "unused", cxHome: directory, cxSeedFile: "unused", excludedThreadIds: [],
+          mcpxUrl: "unused", cxCommand: "unused", cxHome: directory, cxSeedFile: "unused",
           recapSettings: settings, healthPort: 0, uiPort: 0, modelTimeoutMs: 1000, telegramEnabled: true, inputEnabled: false,
         };
         const t3 = {descriptor: () => Effect.succeed({environmentId: "environment", orchestrationProtocolVersion: 2, serverVersion: "test"}),

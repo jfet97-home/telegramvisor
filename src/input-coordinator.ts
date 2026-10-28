@@ -3,6 +3,7 @@ import {
   InputDomainError,
   inputDefinitionHash,
   isEligibleInputThread,
+  isInputNotification,
   makeInputId,
   normalizeInputRequest,
 } from "./input-domain.js";
@@ -55,10 +56,6 @@ export interface InputCoordinatorDependencies {
   readonly telegram: InputTelegramApi;
   readonly native: InputNativeClient;
   readonly replyCleanup?: InputReplyCleanup;
-  readonly routerOnlyInput?: boolean;
-  readonly interactiveThreadId?: string;
-  readonly excludedThreadIds?: readonly string[];
-  readonly readThreadPolicy?: () => { readonly excludedThreadIds: readonly string[]; readonly interactiveThreadId: string | null };
   readonly now?: () => number;
   readonly pollIntervalMs?: number;
   readonly refreshPresentationOnStart?: boolean;
@@ -134,11 +131,8 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
   let lastErrorPhase: string | null = null;
   let cycleHadErrors = false;
   let lastDiscoveryAt: number | null = null;
-  let routerThreadId: string | null = dependencies.interactiveThreadId ?? null;
-  const excludedThreadIds = (): readonly string[] => dependencies.readThreadPolicy?.().excludedThreadIds ?? dependencies.excludedThreadIds ?? [];
-  const isEligibleThread = (thread: InputThread): boolean =>
-    isEligibleInputThread(thread) &&
-    (thread.id === routerThreadId || !excludedThreadIds().includes(thread.id));
+  let routerThreadId: string | null = null;
+  const isEligibleThread = isEligibleInputThread;
   let refreshPresentationOnStart = dependencies.refreshPresentationOnStart === true;
 
   const status = (): InputCoordinatorStatus => {
@@ -178,7 +172,7 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
     const descriptor = await dependencies.native.descriptor();
     if (!isValidDescriptor(descriptor)) throw new InputDomainError("native descriptor is malformed");
     dependencies.store.bindEnvironment(descriptor.environmentId);
-    routerThreadId = dependencies.readThreadPolicy ? dependencies.readThreadPolicy().interactiveThreadId : dependencies.interactiveThreadId ?? descriptor.currentRouterThreadId ?? null;
+    routerThreadId = descriptor.currentRouterThreadId ?? null;
 
     phase = "native_threads";
     const listedThreads = await dependencies.native.listThreads();
@@ -331,10 +325,9 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
     phase = "telegram_send_reconcile";
     for (const tracked of dependencies.store.listRequests()) {
       const messages = dependencies.store.messagesForRequest(tracked.inputId, tracked.requestRevision);
-      const interactive = !dependencies.routerOnlyInput || tracked.threadId === routerThreadId;
-      const needsSnapshot = interactive && messages.some((message) =>
+      const needsSnapshot = messages.some((message) => !isInputNotification(message) && (
         message.state === "unknown" && message.cleanupError !== "send_unconfirmed_expired" ||
-        message.cleanupState === "waiting") ||
+        message.cleanupState === "waiting")) ||
         tracked.retirementState === "intent" || tracked.retirementState === "unknown";
       let snapshot = null;
       if (needsSnapshot) {
@@ -360,7 +353,7 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
       }
       for (const message of messages) {
         if (message.state === "unknown" && message.cleanupError !== "send_unconfirmed_expired" &&
-          (message.messageId === null || !interactive)) {
+          (message.messageId === null || isInputNotification(message))) {
           try {
             const status = await dependencies.telegram.getDeliveryStatus(message.deliveryKey);
             if (status.state === "sent" && status.messageId !== null &&
@@ -384,9 +377,7 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
     phase = "telegram_input_send";
     for (const message of dependencies.store.dueMessages(now(), 500)) {
       if (message.state !== "prepared" && message.state !== "rejected") continue;
-      const policyRequest = dependencies.store.getRequest(message.inputId, message.requestRevision);
-      if (dependencies.routerOnlyInput && policyRequest?.threadId !== routerThreadId &&
-        !message.text.startsWith("Input needed in: ")) {
+      if (isInputNotification(message)) {
         dependencies.store.abandonPreparedMessage(message.deliveryKey, now());
         continue;
       }
@@ -410,10 +401,7 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
       }
       let result;
       try {
-        result = dependencies.routerOnlyInput && request.threadId !== routerThreadId
-          ? await dependencies.telegram.sendInputNotification(rendered, message.deliveryKey,
-            message.isEdit && message.messageId !== null ? message.messageId : undefined)
-          : message.isEdit && message.messageId !== null
+        result = message.isEdit && message.messageId !== null
           ? await dependencies.telegram.editInputMessage(
             message.inputId,
             message.requestRevision,
@@ -454,26 +442,13 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
           tracked.submissionState === "intent" || tracked.submissionState === "accepted") continue;
         const currentMessages = dependencies.store.messagesForRequest(tracked.inputId, tracked.requestRevision)
           .filter((message) => message.generation === tracked.currentGeneration);
-        const policyMismatch = dependencies.routerOnlyInput && tracked.threadId !== routerThreadId &&
-          currentMessages.some((message) => !message.text.startsWith("Input needed in: "));
-        if (policyMismatch) {
-          for (const message of currentMessages) {
-            if (message.state === "prepared" || message.state === "rejected") dependencies.store.abandonPreparedMessage(message.deliveryKey, now());
-          }
-        }
-        const interactive = !dependencies.routerOnlyInput || tracked.threadId === routerThreadId;
-        const agedForRefresh = interactive && currentMessages.some((message) => message.state === "sent" &&
-          (refreshPresentationOnStart || now() - (message.sentAt ?? message.createdAt) >= INPUT_REFRESH_AFTER_MS)) || policyMismatch === true;
+        const needsInteractiveCard = currentMessages.some(isInputNotification);
+        const agedForRefresh = currentMessages.some((message) => message.state === "sent" &&
+          (refreshPresentationOnStart || now() - (message.sentAt ?? message.createdAt) >= INPUT_REFRESH_AFTER_MS)) || needsInteractiveCard;
         const rejected = tracked.submissionState === "rejected" && tracked.submissionDraftRevision === tracked.draftRevision;
         if (tracked.renderedDraftRevision === tracked.draftRevision &&
           tracked.renderedPresentationRevision === tracked.presentationRevision && !agedForRefresh) continue;
-        const rendered = dependencies.routerOnlyInput && tracked.threadId !== routerThreadId
-          ? { questionId: null, fragment: 0, presentationRevision: tracked.presentationRevision,
-            focusId: tracked.presentation.focusId ?? null,
-            text: `Input needed in: ${Array.from(tracked.request.displayTitle?.trim().replace(/[\r\n\p{Cc}]/gu, " ") ?? "").slice(0, 128).join("") || "T3 chat"}\nOpen that chat in T3 to answer its pending questions.`,
-            buttons: [],
-          } satisfies RenderedInputMessage
-          : renderInputCard({
+        const rendered = renderInputCard({
           request: tracked.request,
           answers: tracked.answers,
           presentation: tracked.presentation,
@@ -500,10 +475,6 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
   };
 
   const submitEvent = async (eventId: string, tracked: TrackedInputRequest): Promise<void> => {
-    if (dependencies.routerOnlyInput && tracked.threadId !== routerThreadId) {
-      dependencies.store.completeEvent(eventId);
-      return;
-    }
     phase = "native_submit_read";
     const current = await exactNativeRequest(tracked.threadId, tracked.requestId, tracked.request);
     if (!current || current.terminal || !sameRequest(tracked, current) || current.requestKind === "approval") {
@@ -591,15 +562,16 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
           }
         }
         phase = "input_event_apply";
-        const allowInteractive = !dependencies.routerOnlyInput || tracked?.threadId === routerThreadId;
-        if (allowInteractive && tracked && dependencies.store.messagesForRequest(event.inputId, event.requestRevision)
-          .some((message) => message.messageId === event.messageId)) {
+        const messages = tracked ? dependencies.store.messagesForRequest(event.inputId, event.requestRevision) : [];
+        const notificationOnly = messages.some((message) => isInputNotification(message) &&
+          (message.messageId === event.messageId || message.deliveryKey === event.deliveryKey));
+        if (!notificationOnly && tracked && messages.some((message) => message.messageId === event.messageId)) {
           dependencies.replyCleanup?.track(event, now());
           if (tracked.submissionState === "accepted") {
             dependencies.replyCleanup?.expedite(tracked.inputId, tracked.requestRevision);
           }
         }
-        const result = dependencies.store.applyEvent(event, now(), allowInteractive);
+        const result = dependencies.store.applyEvent(event, now(), !notificationOnly);
         if (result.kind === "submit" && tracked) {
           try { await submitEvent(event.eventId, tracked); }
           catch {
@@ -695,16 +667,8 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
     }
   };
 
-  let lastPolicy: string | null = null;
   const cycle = async (forceDiscovery: boolean): Promise<void> => {
     cycleHadErrors = false;
-    if (dependencies.readThreadPolicy) {
-      const policy = dependencies.readThreadPolicy();
-      const signature = JSON.stringify(policy);
-      if (signature !== lastPolicy) forceDiscovery = true;
-      lastPolicy = signature;
-      routerThreadId = policy.interactiveThreadId;
-    }
     const processFirst = !forceDiscovery && lastDiscoveryAt !== null;
     if (processFirst) {
       await processInbox();

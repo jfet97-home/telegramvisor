@@ -16,7 +16,6 @@ const config = (path: string): TelegramvisorConfig => ({
   cxCommand: "cx",
   cxHome: "/tmp/telegramvisor/runtime-auth",
   cxSeedFile: "/run/secrets/codex-auth.json",
-  excludedThreadIds: [],
   healthPort: 9037,
   modelTimeoutMs: 360_000,
   uiPort: 9038,

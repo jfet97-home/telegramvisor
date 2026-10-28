@@ -14,7 +14,6 @@ import { isManagedThread } from "./managed-threads.js";
 import { makeStore, Store } from "./store.js";
 import { makeT3Client, T3Client } from "./t3.js";
 import { telegramClientLayer } from "./telegram.js";
-import { ThreadPolicyStore } from "./thread-policy.js";
 import { recapperLayer } from "./recap.js";
 import { RecapSettingsStore } from "./recap-settings.js";
 
@@ -35,9 +34,6 @@ const inputWorker = (token: string) => Effect.gen(function* () {
   const coordinator = makeInputCoordinator({
     store,
     replyCleanup,
-    routerOnlyInput: true,
-    readThreadPolicy: () => config.threadPolicy!.get(),
-    excludedThreadIds: config.excludedThreadIds,
     native: makeNativeInputIntegration({
       baseUrl: config.t3Url,
       readToken: token.trim(),
@@ -81,13 +77,6 @@ const inputWorker = (token: string) => Effect.gen(function* () {
 const app = Effect.gen(function* () {
   config.recapSettings = yield* Effect.acquireRelease(
     Effect.sync(() => new RecapSettingsStore(config.dataDirectory)),
-    (store) => Effect.sync(() => store.close()),
-  );
-  config.threadPolicy = yield* Effect.acquireRelease(
-    Effect.sync(() => new ThreadPolicyStore(config.dataDirectory, {
-      excludedThreadIds: config.excludedThreadIds,
-      interactiveThreadId: config.inputInteractiveThreadId ?? null,
-    })),
     (store) => Effect.sync(() => store.close()),
   );
   if (config.telegramEnabled) yield* initializeRuntimeAuth(config);

@@ -1,6 +1,6 @@
 ---
 name: use-telegramvisor
-description: Use an existing Telegramvisor dashboard to inspect notification history, select the interactive questionnaire chat, manage Telegram exclusions or request a fresh recovery update; explain questionnaire replies and cleanup. For product usage, not source maintenance or deployment.
+description: Use an existing Telegramvisor dashboard to inspect notification history or request a fresh recovery update; explain questionnaire replies from any T3 chat, the global recap preference and cleanup. For product usage, not source maintenance or deployment.
 ---
 
 # Use Telegramvisor
@@ -34,9 +34,9 @@ retain older data; report its age and the current error. A ready service does no
 prove a particular notification was delivered. Unknown delivery remains uncertain;
 do not resend it or clear history to make the display look successful. Missing or
 expired detail is unavailable evidence. A disabled service needs operator attention,
-not a change to chat selection.
+not a change to an individual chat.
 
-## Chat selection and exclusions
+## Automatic recaps
 
 Automatic chat recaps are off by default for all chats. The status panel's Enable
 recaps or Disable recaps button saves the choice immediately across restarts.
@@ -44,23 +44,16 @@ Change it only when requested. Enabling starts with new completions and does not
 replay queued recaps or work completed while disabled. Full replies to Telegram
 messages, questionnaires and input-needed notices continue independently.
 
-Chats selects one interactive questionnaire conversation and independent exclusions
-for Telegram communication. Other eligible ordinary chats receive input-needed
-notices. The selected interactive chat can receive questionnaires even when listed
-as excluded; the page explains this exception. No selected chat means no interactive
-questionnaire target, not disabled input-needed alerts for every other chat.
-
-Change only the requested choices, review the draft and choose Save chat settings.
-Drafts survive section navigation. Discard draft restores the latest saved settings.
-A concurrent edit or rejected save keeps the draft; refresh/reconcile before saving
-again. Changes persist across restarts. Telegram exclusions do not edit the separate
-Supervisor policy or disable its workflows.
-
 ## Answering questionnaires
 
+Every ordinary T3 chat can send interactive questionnaires to the same Telegram
+bot chat. No main or interactive chat selection is needed, so resetting the main
+chat does not change where another chat's answers go.
+
 The owner answers using the Telegram card's buttons or Reply to the registered
-question. A plain input-needed notice is not an interactive card and cannot answer
-another chat's native request. Read [questionnaire replies](references/questionnaires.md)
+question. Each card identifies its source T3 chat; answers stay with that request
+when several chats have pending questions. A retained plain input-needed notice is
+not an interactive card. Read [questionnaire replies](references/questionnaires.md)
 for text, selection, review/submission, stale cards and cleanup behavior.
 
 ## Recovery
@@ -71,8 +64,8 @@ Ask chat for recovery update sends an actual fresh-assessment request and may st
 a new turn in an idle chat; use it only when that follow-up is requested.
 
 Answer pending owner questions/approvals first when recovery is deferred. An
-unavailable or excluded chat is not an invitation to change policy or wake it by
-another route. Accepted/reconciled recovery is retained once per chat. Check recovery
+unavailable chat is not an invitation to wake it by another route.
+Accepted/reconciled recovery is retained once per chat. Check recovery
 request reconciles an uncertain original attempt rather than sending it again.
 After an error or rejected request, inspect the displayed outcome before retrying.
 Recovery does not mark older work complete, recreate an old notification or guarantee

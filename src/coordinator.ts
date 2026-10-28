@@ -1,4 +1,3 @@
-import { currentThreadPolicy } from "./thread-policy.js";
 import { Cause, Effect, Option, Schedule } from "effect";
 import { createServer } from "node:http";
 import { deliveryKey, formatMessage, isMainThread } from "./domain.js";
@@ -184,7 +183,7 @@ export const runTelegramvisor = (config: TelegramvisorConfig, status: Telegramvi
     const hints = yield* store.dueHints(Date.now(), 20);
     for (const hint of hints) {
       yield* Effect.gen(function* () {
-        if (!config.telegramEnabled || currentThreadPolicy(config).excludedThreadIds.includes(hint.threadId)) {
+        if (!config.telegramEnabled) {
           yield* store.doneHint(hint.threadId, hint.revision);
           return;
         }
@@ -205,7 +204,7 @@ export const runTelegramvisor = (config: TelegramvisorConfig, status: Telegramvi
         else nextCompletionRead.delete(hint.threadId);
         if (nextCompletionRead.size > 50_000) nextCompletionRead.delete(nextCompletionRead.keys().next().value!);
         const projection = snapshot.projection;
-        if (!isMainThread(projection.thread) || currentThreadPolicy(config).excludedThreadIds.includes(hint.threadId) ||
+        if (!isMainThread(projection.thread) ||
           (yield* checkManagedThread(config, projection.thread))) {yield* store.doneHint(hint.threadId, hint.revision);return;}
         const recapSettings = currentRecapSettings(config);
         const recapsAfter = recapSettings.enabled ? recapSettings.enabledAt : Infinity;
