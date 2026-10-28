@@ -7,7 +7,7 @@ import test from "node:test";
 import { makeInputId, renderInputBatch } from "../src/input-domain.js";
 import type { InputEvent, InputThread, NativeInputRequest } from "../src/input-domain.js";
 import { inputWorkerReady, makeInputCoordinator } from "../src/input-coordinator.js";
-import type { InputCoordinatorDependencies, InputNativeClient, NativeResponseResult } from "../src/input-coordinator.js";
+import type { InputNativeClient, NativeResponseResult } from "../src/input-coordinator.js";
 import { INPUT_CLEANUP_UNCERTAINTY_TTL_MS, makeInputStore } from "../src/input-store.js";
 import { InputReplyCleanup } from "../src/input-reply-cleanup.js";
 import { initialInputPresentation } from "../src/input-ui.js";
@@ -200,7 +200,6 @@ const withHarness = async <A>(
     status: () => ReturnType<ReturnType<typeof makeInputCoordinator>["status"]>;
     store: ReturnType<typeof makeInputStore>;
   }) => Promise<A>,
-  policy: Pick<InputCoordinatorDependencies, "excludedThreadIds" | "readThreadPolicy"> = {},
 ): Promise<A> => {
   const directory = await mkdtemp(join(tmpdir(), "t3-input-coordinator-"));
   const native = new FakeNative();
@@ -210,7 +209,7 @@ const withHarness = async <A>(
   const advance = (milliseconds: number) => { clock += milliseconds; };
   const store = makeInputStore(directory);
   const replyCleanup = new InputReplyCleanup(directory);
-  const coordinator = makeInputCoordinator({ store, replyCleanup, telegram, native, now, pollIntervalMs: 100, ...policy });
+  const coordinator = makeInputCoordinator({ store, replyCleanup, telegram, native, now, pollIntervalMs: 100 });
   try { return await run({ native, telegram, directory, now, advance, runOnce: coordinator.runOnce, status: coordinator.status, store }); }
   finally {
     store.close();
@@ -220,17 +219,6 @@ const withHarness = async <A>(
 };
 
 const allViews = (telegram: FakeTelegram): SentMessage[] => [...telegram.sends, ...telegram.edits];
-
-test("excluded ordinary chats and the excluded current router stay silent", async () => {
-  await withHarness(async ({ native, telegram, store, runOnce }) => {
-    native.threads.push({ id: "excluded-thread", active: true, kind: "main" });
-    native.requests.set("excluded-thread", [{ ...makeRequest(), threadId: "excluded-thread" }]);
-    await runOnce();
-    assert.deepEqual(native.listRequestCalls, []);
-    assert.deepEqual(store.listRequests(), []);
-    assert.equal(telegram.sends.length, 0);
-  }, { excludedThreadIds: ["router-thread", "excluded-thread"] });
-});
 
 test("all ordinary chats receive interactive cards without a selected router", async () => {
   await withHarness(async ({ native, telegram, runOnce }) => {
@@ -280,26 +268,6 @@ const submitCallback = (sent: SentMessage, eventId: string, updateId: number): O
   void ignored;
   return submit;
 };
-
-test("saved exclusions retire existing cards and reject pending answers on the next fast cycle", async () => {
-  let policy = { excludedThreadIds: [] as string[] };
-  await withHarness(async ({ native, telegram, store, runOnce }) => {
-    await runOnce();
-    const question = currentQuestionMessage(telegram, "single");
-    policy = { excludedThreadIds: ["router-thread"] };
-    telegram.inbox = [callback(question, { eventId: "excluded-answer", action: "answer", text: "must not submit", contributionId: "2001" })];
-    native.readCalls = [];
-    await runOnce(false);
-    assert.equal(telegram.sends.length, 1);
-    assert.equal(telegram.edits.length, 0);
-    assert.equal(native.responseCalls.length, 0);
-    assert.deepEqual(native.readCalls, []);
-    assert.equal(telegram.inbox.length, 0);
-    assert.notEqual(store.getRequest(question.inputId, question.requestRevision)?.lifecycle, "active");
-    assert.ok(telegram.deletes.some(message => message.messageId === question.messageId));
-    assert.ok(!telegram.deletes.some(message => message.messageId === 2001));
-  }, { readThreadPolicy: () => policy });
-});
 
 const navigate = (sent: SentMessage, value: string, eventId: string, updateId: number): InputEvent => callback(sent, {
   eventId,

@@ -6,7 +6,7 @@ Telegram communication for T3, independently of project and workflow supervision
 - Exact full answers to messages routed from Telegram.
 - Input-needed notifications and native questionnaires with buttons or text replies.
 - Receipt reactions, answer drafts, submission and cleanup across both interfaces.
-- Interactive questionnaires from every non-excluded ordinary T3 chat.
+- Interactive questionnaires from every ordinary T3 chat.
 - Notification history, delivery status and explicit recovery updates.
 
 Telegramvisor uses unmodified T3 APIs and the existing MCPX Telegram bridge.
@@ -17,14 +17,12 @@ from Lima; VM installation and port forwarding require a new explicit request.
 ## Dashboard
 
 The portable [usage skill](skills/use-telegramvisor/SKILL.md) covers dashboard
-history, chat policy, questionnaires and recovery requests.
+history, questionnaires and recovery requests.
 
 The default dashboard is http://127.0.0.1:9038. History shows retained notification,
-questionnaire and cleanup outcomes. Chats controls notification exclusions. Questions
-from every non-excluded ordinary T3 chat can be answered in the same Telegram bot
-chat. No main chat selection is required. Excluded chats receive no recaps, full
-replies or questions; workflow
-supervision has its own independent exclusions. Recovery can ask an eligible chat for a fresh assessment when
+questionnaire and cleanup outcomes. Questions from every ordinary T3 chat can be
+answered in the same Telegram bot chat. No main chat selection or per-chat policy
+is required. Recovery can ask an eligible chat for a fresh assessment when
 historical completion coverage is incomplete; currently one request per chat is
 retained. A fresh answer does not reconstruct an old notification.
 
@@ -84,7 +82,7 @@ precedence. Disabled workers retain their queues and uncertainty. Re-enabling re
 existing queued work without treating all disabled-period completions as new work.
 
 State lives under `DATA_DIRECTORY`: completion/catalog/outbox, native input, reply
-cleanup, chat settings and private login/model state. Persist it across deployments.
+cleanup, global recap settings and private login/model state. Persist it across deployments.
 Unknown sends or submissions are reconciled under their original identity, never
 blindly resent. Only confirmed non-delivery follows the original-key retry path.
 

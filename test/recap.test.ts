@@ -50,7 +50,6 @@ const config: TelegramvisorConfig = {
   cxCommand: "/usr/local/bin/cx",
   cxHome: "/tmp/telegramvisor-cx-home",
   cxSeedFile: "/run/secrets/codex-auth.json",
-  excludedThreadIds: [],
   healthPort: 0,
   uiPort: 0,
   modelTimeoutMs: 360_000,

@@ -1,6 +1,6 @@
 # Questionnaire replies
 
-Every non-excluded ordinary T3 chat can send questions to the same Telegram bot chat. An
+Every ordinary T3 chat can send questions to the same Telegram bot chat. An
 interactive card belongs to one native request in the T3 chat named on the card. Use its
 question navigation and choose the intended question before entering an answer.
 Single-choice and multiple-choice controls follow that question's options. Text

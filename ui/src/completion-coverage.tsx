@@ -39,7 +39,7 @@ export function CompletionCoverage() {
         uncertain: "Delivery is unconfirmed. Check again to inspect the original request; it will not be resent.",
         rejected: "T3 rejected this request. No recovery update has been confirmed.",
         deferred: result.reason === "owner_input_pending" ? "Answer the chat’s pending question or approval first, then try again." : "The chat is not ready for a recovery request. Try again after its current activity changes.",
-        unavailable: "This chat is unavailable or excluded from completion notifications.",
+        unavailable: "This chat is unavailable for completion recovery.",
       };
       setMessage(messages[result.status] ?? "Refresh to inspect the recovery request.");
       await refresh();

@@ -56,8 +56,6 @@ export interface InputCoordinatorDependencies {
   readonly telegram: InputTelegramApi;
   readonly native: InputNativeClient;
   readonly replyCleanup?: InputReplyCleanup;
-  readonly excludedThreadIds?: readonly string[];
-  readonly readThreadPolicy?: () => { readonly excludedThreadIds: readonly string[] };
   readonly now?: () => number;
   readonly pollIntervalMs?: number;
   readonly refreshPresentationOnStart?: boolean;
@@ -134,8 +132,7 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
   let cycleHadErrors = false;
   let lastDiscoveryAt: number | null = null;
   let routerThreadId: string | null = null;
-  const isEligibleThread = (thread: InputThread): boolean => isEligibleInputThread(thread) &&
-    !(dependencies.readThreadPolicy?.().excludedThreadIds ?? dependencies.excludedThreadIds ?? []).includes(thread.id);
+  const isEligibleThread = isEligibleInputThread;
   let refreshPresentationOnStart = dependencies.refreshPresentationOnStart === true;
 
   const status = (): InputCoordinatorStatus => {
@@ -670,14 +667,8 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
     }
   };
 
-  let lastPolicy: string | null = null;
   const cycle = async (forceDiscovery: boolean): Promise<void> => {
     cycleHadErrors = false;
-    if (dependencies.readThreadPolicy) {
-      const signature = JSON.stringify(dependencies.readThreadPolicy());
-      if (signature !== lastPolicy) forceDiscovery = true;
-      lastPolicy = signature;
-    }
     const processFirst = !forceDiscovery && lastDiscoveryAt !== null;
     if (processFirst) {
       await processInbox();

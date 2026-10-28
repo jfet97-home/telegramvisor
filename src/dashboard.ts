@@ -4,9 +4,8 @@ import {readFile} from "node:fs/promises";
 import {existsSync} from "node:fs";
 import {DatabaseSync} from "node:sqlite";
 import {extname, join, resolve, sep} from "node:path";
-import {Effect, Schema} from "effect";
+import {Effect} from "effect";
 import {createServiceAuth} from "./service-auth.js";
-import {ThreadPolicy} from "./thread-policy-contract.js";
 import {currentRecapSettings} from "./recap-settings.js";
 import {CompletionRecovery} from "./completion-recovery.js";
 import {makeNativeRpc} from "./native-rpc.js";
@@ -95,7 +94,7 @@ export const startDashboard = async (config: TelegramvisorConfig, {store, t3, st
       },
       isGapActionable: async (id, threadId) => (await Effect.runPromise(store.completionGap!(id)))?.threadId === threadId,
       isThreadAllowed: async id => {
-        if (!config.telegramEnabled || config.threadPolicy?.get().excludedThreadIds.includes(id)) return false;
+        if (!config.telegramEnabled) return false;
         if (!t3.threadShells) return false;
         const thread = (await Effect.runPromise(t3.threadShells())).find(thread => thread.id === id);
         return thread !== undefined && !isManagedThread(config, thread);
@@ -149,7 +148,7 @@ export const startDashboard = async (config: TelegramvisorConfig, {store, t3, st
         const history = [...await Effect.runPromise(store.history(), {signal}), ...readInputHistory(config.dataDirectory)].sort((a,b) => b.createdAt-a.createdAt).slice(0, 200);
         send(200, {status: {...status, readiness: readiness(status, config)}, enabled: config.telegramEnabled, inputEnabled: config.inputEnabled,
           threads: shells.filter(thread => thread.lineage?.relationshipToParent !== "subagent" && !isManagedThread(config, thread)),
-          threadPolicy: config.threadPolicy?.get(), recapSettings: currentRecapSettings(config), history});return;
+          recapSettings: currentRecapSettings(config), history});return;
       }
       if (url.pathname === "/api/recap-settings" && request.method === "POST") {
         if (!config.recapSettings) {send(409, {message: "Recap settings are unavailable."});return;}
@@ -158,11 +157,6 @@ export const startDashboard = async (config: TelegramvisorConfig, {store, t3, st
           !Number.isSafeInteger(payload.generation) || payload.generation < 1) {send(400, {message: "Choose valid recap settings."});return;}
         try {send(200, config.recapSettings.save({generation: payload.generation, enabled: payload.enabled}));}
         catch {send(409, {message: "Recap settings changed. Refresh before trying again."});}return;
-      }
-      if (url.pathname === "/api/chat-policy" && request.method === "POST") {
-        if (!config.threadPolicy) {send(409, {message: "Chat settings are unavailable."});return;}
-        let policy;try {policy = Schema.decodeUnknownSync(ThreadPolicy)(await readBody(request, 64_000));} catch (error) {if (error instanceof BodyLimitError) throw error;send(400, {message: "Choose valid chat settings."});return;}
-        try {send(200, config.threadPolicy.save(policy));} catch {send(409, {message: "Settings changed. Reload before saving again."});}return;
       }
       if (url.pathname === "/api/completion-gaps" && request.method === "GET") {
         const gaps = store.completionGaps ? await Effect.runPromise(store.completionGaps(), {signal}) : [];

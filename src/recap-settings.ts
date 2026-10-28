@@ -7,7 +7,7 @@ import type { TelegramvisorConfig } from "./types.js";
 const RecapSettings = Schema.Struct({generation: Schema.Number, enabled: Schema.Boolean, enabledAt: Schema.Number});
 export type RecapSettingsValue = typeof RecapSettings.Type;
 
-/** Persists the recap opt-in separately from chat-setting drafts. */
+/** Persists the global recap opt-in and enablement cutoff. */
 export class RecapSettingsStore {
   private readonly db: DatabaseSync;
   constructor(directory: string) {

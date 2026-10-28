@@ -4,13 +4,11 @@ import {CompletionCoverage} from "./completion-coverage.js";
 import {clearAccess, getCsrfToken, getSessionToken, loadAccess, sessionHeaders, setSessionToken} from "./access.js";
 import "./style.css";
 
-type Policy = {generation: number; excludedThreadIds: string[]};
 type RecapSettings = {generation: number; enabled: boolean; enabledAt: number};
 type Activity = {id: string; kind: string; threadId: string | null; state: string; reason: string | null; detail: string | null; createdAt: number};
 type Snapshot = {
   enabled: boolean; inputEnabled: boolean;
   threads: Array<{id: string; title: string}>;
-  threadPolicy: Policy;
   recapSettings: RecapSettings;
   history: Activity[];
   status: {t3Connected: boolean; telegramState: string; modelState: string; inputState: string; inputLastErrorPhase: string | null;
@@ -25,44 +23,6 @@ const call = async (path: string, body?: unknown) => {
   if (!response.ok) throw new Error(typeof value === "object" && value !== null && "message" in value ? String(value.message) : "The request could not be confirmed. Refresh before trying again.");
   return value;
 };
-
-function ChatSettings({data, draft, onDraft}: {data: Snapshot; draft: Policy | null; onDraft: (value: Policy | null) => void}) {
-  const [form, setForm] = useState(draft ?? data.threadPolicy);
-  const [dirty, setDirty] = useState(draft !== null);
-  const [busy, setBusy] = useState(false);
-  const [search, setSearch] = useState("");
-  const [message, setMessage] = useState("");
-  const [error, setError] = useState("");
-  useEffect(() => {if (!dirty) setForm(data.threadPolicy);}, [data.threadPolicy, dirty]);
-  const chats = [...data.threads];
-  for (const id of form.excludedThreadIds) {
-    if (!chats.some(chat => chat.id === id)) chats.push({id, title: "Unavailable chat"});
-  }
-  const change = (patch: Partial<Policy>) => {const next = {...form, ...patch};setForm(next);onDraft(next);setDirty(true);setMessage("");setError("");};
-  return <form className="panel stack" action="/api/chat-policy" method="post" onSubmit={event => {
-    event.preventDefault();setBusy(true);setMessage("");setError("");
-    void call("/api/chat-policy", form).then(value => {setForm(value as Policy);setDirty(false);onDraft(null);setMessage("Chat settings saved.");})
-      .catch(cause => setError(cause instanceof Error ? cause.message : "Settings could not be confirmed. Reload before saving again."))
-      .finally(() => setBusy(false));
-  }}>
-    <h2>Chat settings</h2>
-    <p className="muted">Answer questions from any non-excluded T3 chat in your Telegram bot chat. Reply to the question card for the chat you want to answer.</p>
-    <fieldset className="stack" aria-describedby="chat-exclusions-help"><legend>Excluded chats</legend>
-      <p id="chat-exclusions-help">Excluded chats receive no new recaps, full replies or questions. Existing question cards are retired when a chat is excluded.</p>
-      <label htmlFor="chat-search">Find a chat</label>
-      <input id="chat-search" name="search" type="search" autoCapitalize="none" spellCheck={false} value={search} onChange={event => setSearch(event.target.value)}/>
-      <div className="chat-list">{chats.filter(chat => `${chat.title} ${chat.id}`.toLowerCase().includes(search.toLowerCase()))
-        .sort((a,b) => a.title.localeCompare(b.title)).map(chat => <label className="check" key={chat.id}>
-          <input type="checkbox" name="excludedThreadIds" value={chat.id} checked={form.excludedThreadIds.includes(chat.id)}
-            onChange={event => change({excludedThreadIds: event.target.checked ? [...form.excludedThreadIds, chat.id] : form.excludedThreadIds.filter(id => id !== chat.id)})}/>
-          <span>{chat.title}<small>{chat.id}</small></span>
-        </label>)}</div>
-    </fieldset>
-    <div className="row"><button type="submit" className="primary" disabled={busy}>{busy ? "Saving…" : "Save chat settings"}</button>
-      <button type="button" disabled={busy || !dirty} onClick={() => {setForm(data.threadPolicy);setDirty(false);onDraft(null);setError("");setMessage("Saved settings reloaded.");}}>Discard draft</button></div>
-    <p role="status">{message}</p>{error && <p role="alert">{error}</p>}
-  </form>;
-}
 
 function History({data}: {data: Snapshot}) {
   const [search, setSearch] = useState("");
@@ -81,7 +41,7 @@ function History({data}: {data: Snapshot}) {
   </section>;
 }
 
-function Dashboard({onSignOut, draft, onDraft}: {onSignOut: () => Promise<void>; draft: Policy | null; onDraft: (value: Policy | null) => void}) {
+function Dashboard({onSignOut}: {onSignOut: () => Promise<void>}) {
   const [data, setData] = useState<Snapshot | null>(null);
   const [view, setView] = useState("history");
   const [error, setError] = useState("");
@@ -90,7 +50,7 @@ function Dashboard({onSignOut, draft, onDraft}: {onSignOut: () => Promise<void>;
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {try {const value = await call("/api/snapshot") as Snapshot;if (!cancelled) {setData(value);setError("");}}
-      catch {if (!cancelled) setError("Telegramvisor could not be refreshed. Saved history and drafts are retained.");}};
+      catch {if (!cancelled) setError("Telegramvisor could not be refreshed. Saved history is retained.");}};
     void refresh();const timer = setInterval(() => {if (document.visibilityState === "visible") void refresh();}, 5000);
     return () => {cancelled = true;clearInterval(timer);};
   }, []);
@@ -118,15 +78,14 @@ function Dashboard({onSignOut, draft, onDraft}: {onSignOut: () => Promise<void>;
         {data.status.inputLastErrorPhase === "native_requests" && <p role="status">Current questions could not be read from T3. No question has been assumed answered.</p>}
         <div className="row"><span>Queued: {(jobs?.pending ?? 0) + (jobs?.ready ?? 0)}</span><span>Unconfirmed: {jobs?.unknown ?? 0}</span><span>History gaps: {data.status.store?.completionCoverageGaps ?? 0}</span></div>
       </section>
-      <nav className="row" aria-label="Telegramvisor sections">{["history", "recovery", "chats"].map(name => <button key={name} type="button" aria-current={view === name ? "page" : undefined} onClick={() => setView(name)}>{name === "history" ? "History" : name === "recovery" ? "Recovery" : "Chats"}</button>)}</nav>
-      {view === "history" && <History data={data}/>}{view === "recovery" && <CompletionCoverage/>}{view === "chats" && <ChatSettings data={data} draft={draft} onDraft={onDraft}/>}
+      <nav className="row" aria-label="Telegramvisor sections">{["history", "recovery"].map(name => <button key={name} type="button" aria-current={view === name ? "page" : undefined} onClick={() => setView(name)}>{name === "history" ? "History" : "Recovery"}</button>)}</nav>
+      {view === "history" && <History data={data}/>}{view === "recovery" && <CompletionCoverage/>}
     </>}
   </main>;
 }
 
 function App() {
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
-  const [draft, setDraft] = useState<Policy | null>(null);
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -135,7 +94,7 @@ function App() {
     window.addEventListener("telegramvisor-auth-required", required);return () => window.removeEventListener("telegramvisor-auth-required", required);
   }, []);
   if (authenticated === null) return <main><p role="status">Checking sign-in…</p></main>;
-  if (authenticated) return <Dashboard draft={draft} onDraft={setDraft} onSignOut={async () => {await call("/auth/logout", {});clearAccess();setAuthenticated(false);setError("");}}/>;
+  if (authenticated) return <Dashboard onSignOut={async () => {await call("/auth/logout", {});clearAccess();setAuthenticated(false);setError("");}}/>;
   return <main className="signin"><h1>Telegramvisor</h1><p>Sign in with a single-use access token.</p>
     <p className="muted">Run <code>telegramvisor auth forge</code> in the service environment to obtain a token.</p>
     <form className="panel stack" action="/auth/login" method="post" onSubmit={event => {

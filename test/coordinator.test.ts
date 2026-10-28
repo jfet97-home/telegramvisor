@@ -111,7 +111,6 @@ test("completion scan refreshes legacy lineage and defers inventory failures per
     cxCommand: "unused",
     cxHome: directory,
     cxSeedFile: "unused",
-    excludedThreadIds: [],
     healthPort: 0,
     modelTimeoutMs: 1_000,
     telegramEnabled: true,

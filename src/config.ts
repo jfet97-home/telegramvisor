@@ -21,7 +21,6 @@ export const loadConfig = (): TelegramvisorConfig => {
     cxCommand: process.env.CX_COMMAND ?? "cx",
     cxHome: process.env.CX_HOME ?? join(dataDirectory, "runtime-auth"),
     cxSeedFile: process.env.CX_SEED_FILE ?? "/run/secrets/codex-auth.json",
-    excludedThreadIds: (process.env.EXCLUDED_THREAD_IDS ?? "").split(",").map((id) => id.trim()).filter(Boolean),
     healthPort: Number(process.env.HEALTH_PORT ?? "9037"),
     modelTimeoutMs: Number(process.env.MODEL_TIMEOUT_MS ?? "360000"),
     telegramEnabled: process.env.TELEGRAM_ENABLED === "true",
