@@ -948,6 +948,11 @@ class SqliteStore implements StoreShape {
       const shell = readThread(value);
       this.storeThread(shell, stream === "active" ? "active" : "archive", now);
     }
+    if (stream === "active") {
+      const archived = archivedThreads as unknown[];
+      this.reconcileThreads("archive", archived, now);
+      for (const value of archived) this.storeThread(readThread(value), "archive", now);
+    }
     return true;
   }
 

@@ -222,6 +222,56 @@ test("metadata enrichment updates projects without replacing thread inventory or
   });
 });
 
+test("one shell snapshot reconciles active and archived chats without resetting the legacy archive cursor", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    await withStore(directory, (store) => Effect.gen(function* () {
+      yield* store.activate("environment-1", 1);
+      yield* store.enqueue("environment-1", "archived-1", "run-1", recapContext, 2);
+      yield* store.ingest(sourceItem("archive", {
+        kind: "thread.updated", sequence: 6, thread: thread("legacy-archive"),
+      }));
+      yield* store.ingest(sourceItem("active", {
+        kind: "snapshot",
+        snapshot: {
+          schemaVersion: 2, snapshotSequence: 10, projects: [project()],
+          threads: [thread("active-1")],
+          archivedThreads: [{ ...thread("archived-1"), archivedAt: "2026-10-01T00:00:00Z" }],
+        },
+      }));
+      assert.equal(yield* store.cursor("active"), 10);
+      assert.equal(yield* store.cursor("archive"), 6);
+      assert.equal((yield* store.thread("active-1"))?.id, "active-1");
+      assert.equal((yield* store.thread("archived-1"))?.archivedAt, "2026-10-01T00:00:00Z");
+      assert.equal((yield* store.thread("legacy-archive"))?.id, "legacy-archive");
+      assert.equal(yield* store.hasIdentity("environment-1", "archived-1", "run-1"), true);
+    }));
+    const db = new DatabaseSync(join(directory, "telegramvisor.sqlite3"), { readOnly: true });
+    try {
+      const locations = db.prepare("SELECT id,location FROM threads ORDER BY id").all();
+      assert.deepEqual(locations.map((row) => [row.id, row.location]), [
+        ["active-1", "active"], ["archived-1", "archive"], ["legacy-archive", "removed"],
+      ]);
+    } finally { db.close(); }
+  });
+});
+
+test("a malformed archived chat rolls back the entire unified snapshot and its cursor", async () => {
+  await withTemporaryDirectory(async (directory) => {
+    await assert.rejects(withStore(directory, (store) => store.ingest(sourceItem("active", {
+      kind: "snapshot",
+      snapshot: {
+        schemaVersion: 2, snapshotSequence: 10, projects: [project()],
+        threads: [thread("active-1")], archivedThreads: [{ id: "invalid-archive" }],
+      },
+    }))));
+    await withStore(directory, (store) => Effect.gen(function* () {
+      assert.equal(yield* store.cursor("active"), 0);
+      assert.equal(yield* store.thread("active-1"), null);
+      assert.equal((yield* store.stats()).projects, 0);
+    }));
+  });
+});
+
 test("archive removal retains the known shell for later archived-thread lookup", async () => {
   await withTemporaryDirectory(async (directory) => {
     await withStore(directory, (store) => Effect.gen(function* () {
