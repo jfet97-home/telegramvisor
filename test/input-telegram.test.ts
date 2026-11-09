@@ -64,9 +64,51 @@ test("native text replies receive a stable receipt and uncertain reactions do no
     { result: success({ delivery_key: key, state: "unknown" }) },
   ], calls);
   assert.equal((await client.readInputInbox(10)).length, 1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.deepEqual(calls[2]?.args, { message_id: 207, emoji: "👍", delivery_key: key });
   assert.equal((await client.readInputInbox(10)).length, 1);
+  await new Promise<void>((resolve) => setImmediate(resolve));
   assert.equal(calls.filter((call) => call.name.endsWith("set_message_reaction")).length, 1);
+});
+
+test("a blocked receipt does not delay inbox reads or acknowledgements and is not duplicated", async () => {
+  const reaction = Promise.withResolvers<unknown>();
+  const reactionStarted = Promise.withResolvers<void>();
+  const calls: string[] = [];
+  const key = "telegram-123-received-1"; // gitleaks:allow
+  const event = {
+    event_id: "telegram:123", update_id: 123, update_epoch: 1, message_id: 42,
+    input_id: "input", request_revision: "revision", draft_revision: 0,
+    question_id: "q", action: "answer", text: "answer", contribution_id: "207", delivery_key: "view-key",
+  };
+  const client = makeInputTelegramClient(mcpxUrl, {
+    makeSession: () => ({
+      connect: async () => undefined,
+      close: async () => undefined,
+      callTool: async (name) => {
+        calls.push(name);
+        if (name.endsWith("read_input_inbox")) return success({ events: [event] });
+        if (name.endsWith("get_delivery_status")) return success({ delivery_key: key, state: "not_found" });
+        if (name.endsWith("ack_input_events")) return success({ result: true });
+        reactionStarted.resolve();
+        return reaction.promise;
+      },
+    }),
+  });
+  let blocked = true;
+  const timeout = setTimeout(() => { blocked = false; reaction.resolve(success({ result: true })); }, 1_500);
+  try {
+    assert.equal((await client.readInputInbox(10)).length, 1);
+    assert.equal(blocked, true, "a receipt must not hold the inbox read open");
+    await reactionStarted.promise;
+    assert.deepEqual(await client.acknowledgeInputEvents(["telegram:123"], "ack-key"), { kind: "done" });
+    assert.equal((await client.readInputInbox(10)).length, 1);
+    assert.equal(calls.filter((name) => name.endsWith("set_message_reaction")).length, 1);
+  } finally {
+    clearTimeout(timeout);
+    reaction.resolve(success({ result: true }));
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
 });
 
 test("routes input mutations through MCPX wrapper with exact bridge arguments", async () => {

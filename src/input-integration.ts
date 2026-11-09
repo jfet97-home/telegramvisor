@@ -84,6 +84,7 @@ export const makeNativeInputIntegration = (options: InputT3ClientOptions & {isMa
       for (const id of cache.keys()) if (!threads.has(id)) cache.delete(id);
       return listed.filter((thread) => options.isManagedThread?.(thread) !== true).map((thread): InputThread => ({
         id: thread.id,
+        pendingRequestId: thread.pendingRuntimeRequest?.kind === "user_input" ? thread.pendingRuntimeRequest.id : null,
         rootThreadId: thread.lineage.rootThreadId,
         active: true,
         archived: thread.archived === true || thread.archivedAt != null,

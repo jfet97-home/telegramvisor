@@ -319,6 +319,21 @@ test("bounded completion projection uses the encoded bounded route and accepts i
   }
 });
 
+test("bounded completion projection accepts a current snapshot without the retired budget hint", async () => {
+  const threadId = "thread-1";
+  const body = makeBoundedCompletionSnapshot(threadId);
+  delete body.payloadBudgetExceeded;
+  const server = await startMockServer((_request, response) => sendJson(response, 200, body));
+  try {
+    const client = await getClient(server.baseUrl);
+    const result = await Effect.runPromise(client.boundedCompletionProjection!(threadId));
+    assert.equal(result.hasMoreHistory, true);
+    assert.equal(result.historyCursor, "history-cursor-1");
+    assert.equal(result.latestLocalTurnOrdinal, 2);
+    assert.equal(Object.hasOwn(result, "payloadBudgetExceeded"), false);
+  } finally { await server.close(); }
+});
+
 test("bounded completion projection rejects mismatched thread, schema, and window fields", async () => {
   const threadId = "thread-1";
   let responseBody: JsonRecord = makeBoundedCompletionSnapshot(threadId);
@@ -573,7 +588,7 @@ test("HTTP requests time out and abort their underlying fetch", async () => {
   }
 });
 
-test("watch handles RPC envelopes and waits for durable ingestion before acknowledging chunks", async () => {
+test("watch uses the unified shell subscription and waits for durable ingestion before acknowledging chunks", async () => {
   const subscriptions: JsonRecord[] = [];
   const acknowledgements: string[] = [];
   const requestsSeen = deferred<void>();
@@ -596,7 +611,7 @@ test("watch handles RPC envelopes and waits for durable ingestion before acknowl
       if (!isRecord(frame)) return;
       if (frame._tag === "Request") {
         subscriptions.push(frame);
-        if (subscriptions.length === 2) {
+        if (subscriptions.length === 1) {
           requestsSeen.resolve();
           const activeSnapshot = {
             kind: "snapshot",
@@ -604,11 +619,11 @@ test("watch handles RPC envelopes and waits for durable ingestion before acknowl
             resolvedRepositoryIdentityRoots: ["/workspace/repo"]
           };
           const activeUpdate = { kind: "thread.updated", sequence: 12, thread: { id: "thread-1" } };
-          const archiveSnapshot = { kind: "snapshot", snapshot: { schemaVersion: 2, snapshotSequence: 4, projects: [], threads: [] } };
+          const archiveUpdate = { kind: "thread.updated", sequence: 13, location: "archive", thread: { id: "archived-1" } };
           socket.send(JSON.stringify([
             { _tag: "Ping" },
             { _tag: "Chunk", requestId: "1", values: [activeSnapshot, activeUpdate] },
-            { _tag: "Chunk", requestId: "2", values: [archiveSnapshot] }
+            { _tag: "Chunk", requestId: "1", values: [archiveUpdate] }
           ]));
         }
         return;
@@ -645,20 +660,14 @@ test("watch handles RPC envelopes and waits for durable ingestion before acknowl
         tag: "orchestration.subscribeShell",
         payload: { afterSequence: 7, requestCompletionMarker: true },
         headers: []
-      },
-      {
-        _tag: "Request",
-        id: "2",
-        tag: "orchestration.subscribeArchivedShell",
-        payload: {},
-        headers: []
       }
     ]);
 
     releaseIngest?.();
     await within(acknowledgementsSeen.promise);
-    assert.deepEqual(acknowledgements, ["1", "2"]);
-    assert.deepEqual(items.map((item) => item.stream), ["active", "active", "archive"]);
+    assert.deepEqual(acknowledgements, ["1", "1"]);
+    assert.deepEqual(items.map((item) => item.stream), ["active", "active", "active"]);
+    assert.equal(items[2]?.item.location, "archive");
     assert.deepEqual(items[0]?.item.resolvedRepositoryIdentityRoots, ["/workspace/repo"]);
 
     await Effect.runPromise(Fiber.interrupt(fiber));
@@ -754,7 +763,7 @@ test("watch bounds a websocket handshake that never completes", async () => {
 test("watch fails closed on subscription Exit and Defect frames so the caller can reconnect", async () => {
   for (const terminal of [
     { _tag: "Exit", requestId: "1", exit: { _tag: "Success", value: null } },
-    { _tag: "Defect", requestId: "2", defect: { message: "private server detail" } }
+    { _tag: "Defect", requestId: "1", defect: { message: "private server detail" } }
   ]) {
     const sent = deferred<void>();
     const server = await startMockServer((_request, response) => sendJson(response, 404, {}));

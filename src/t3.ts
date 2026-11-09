@@ -38,7 +38,7 @@ export interface T3BoundedCompletionSnapshot extends JsonRecord {
   historyCursor: string | null;
   hasMoreHistory: boolean;
   latestLocalTurnOrdinal: number | null;
-  payloadBudgetExceeded: boolean;
+  payloadBudgetExceeded?: boolean;
 }
 
 export interface T3ThreadShell extends ThreadInfo {
@@ -558,7 +558,7 @@ const makeBoundedCompletionSnapshot = (
     !isStringOrNull(value.historyCursor) ||
     (value.hasMoreHistory ? !isNonEmptyString(value.historyCursor) : value.historyCursor !== null) ||
     !(value.latestLocalTurnOrdinal === null || isSequence(value.latestLocalTurnOrdinal)) ||
-    typeof value.payloadBudgetExceeded !== "boolean" ||
+    (value.payloadBudgetExceeded !== undefined && typeof value.payloadBudgetExceeded !== "boolean") ||
     (value.turnItemsOmitLocalVisible !== undefined && value.turnItemsOmitLocalVisible !== false)) return undefined;
 
   const projection = value.projection as Projection;
@@ -721,14 +721,6 @@ const makeService = (options: T3ClientOptions): T3ClientShape => {
           payload: activePayload,
           headers: []
         });
-        yield* sendWebSocketFrame(socket, {
-          _tag: "Request",
-          id: "2",
-          tag: "orchestration.subscribeArchivedShell",
-          payload: {},
-          headers: []
-        });
-
         const handleEnvelope = (envelope: JsonRecord): Effect.Effect<void, T3TransportError | E, R> => {
           if (envelope._tag === "Ping") return sendWebSocketFrame(socket, { _tag: "Pong" });
           if (envelope._tag === "Pong") return Effect.sync(() => heartbeat.onPong());
@@ -736,13 +728,13 @@ const makeService = (options: T3ClientOptions): T3ClientShape => {
           if (envelope._tag === "Defect") return Effect.fail(new T3TransportError("T3 subscription failed"));
           const values = envelope.values;
           if (envelope._tag !== "Chunk" ||
-            (envelope.requestId !== "1" && envelope.requestId !== "2") ||
+            envelope.requestId !== "1" ||
             !Array.isArray(values)) {
             return Effect.fail(new T3TransportError("T3 websocket message used an unsupported protocol frame"));
           }
 
           const chunkValues: unknown[] = values;
-          const stream: SourceItem["stream"] = envelope.requestId === "1" ? "active" : "archive";
+          const stream: SourceItem["stream"] = "active";
           return Effect.gen(function*() {
             for (const value of chunkValues) {
               const item = validateSnapshotItem(value, stream);

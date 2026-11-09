@@ -5,6 +5,7 @@ import type { InputT3Thread } from "./input-t3.js";
 import { startDashboard } from "./dashboard.js";
 import { initializeRuntimeAuth, loadConfig } from "./config.js";
 import { createStatus, runTelegramvisor } from "./coordinator.js";
+import type { InputCoordinatorStatus } from "./input-coordinator.js";
 import { inputWorkerReady, makeInputCoordinator } from "./input-coordinator.js";
 import { makeNativeInputIntegration } from "./input-integration.js";
 import { makeInputStore } from "./input-store.js";
@@ -31,6 +32,19 @@ const inputWorker = (token: string) => Effect.gen(function* () {
     Effect.sync(() => new InputReplyCleanup(config.dataDirectory)),
     (value) => Effect.sync(() => value.close()),
   );
+  const publishInputStatus = (input: InputCoordinatorStatus): void => {
+    status.inputRequests = input.requests;
+    status.inputUncertain = input.uncertain;
+    status.inputBlockingUncertain = input.blockingUncertain;
+    status.inputRetiredUnconfirmedSends = input.retiredUnconfirmedSends;
+    status.inputMessages = input.messages;
+    status.inputPendingCleanup = input.pendingCleanup;
+    status.inputReplyCleanupExpired = input.replyCleanupExpired;
+    status.inputLastErrorPhase = input.lastErrorPhase;
+    status.inputCapacity = input.capacity;
+    status.inputHeartbeat = input.lastCycleAt ? Date.parse(input.lastCycleAt) : status.inputHeartbeat;
+    status.inputState = inputWorkerReady(input) ? "ready" : "degraded";
+  };
   const coordinator = makeInputCoordinator({
     store,
     replyCleanup,
@@ -45,6 +59,7 @@ const inputWorker = (token: string) => Effect.gen(function* () {
     }),
     pollIntervalMs: config.inputPollMs ?? 1_000,
     refreshPresentationOnStart: true,
+    onProgress: publishInputStatus,
     onError: (phase) => { status.inputState = "degraded"; status.inputLastErrorPhase = phase; },
   });
   const cycle = Effect.gen(function* () {
@@ -52,17 +67,7 @@ const inputWorker = (token: string) => Effect.gen(function* () {
       status.inputState = "degraded";
     })));
     const input = coordinator.status();
-    status.inputRequests = input.requests;
-    status.inputUncertain = input.uncertain;
-    status.inputBlockingUncertain = input.blockingUncertain;
-    status.inputRetiredUnconfirmedSends = input.retiredUnconfirmedSends;
-    status.inputMessages = input.messages;
-    status.inputPendingCleanup = input.pendingCleanup;
-    status.inputReplyCleanupExpired = input.replyCleanupExpired;
-    status.inputLastErrorPhase = input.lastErrorPhase;
-    status.inputCapacity = input.capacity;
-    status.inputHeartbeat = input.lastCycleAt ? Date.parse(input.lastCycleAt) : status.inputHeartbeat;
-    status.inputState = inputWorkerReady(input) ? "ready" : "degraded";
+    publishInputStatus(input);
     yield* Effect.sleep(config.inputPollMs ?? 1_000);
   }).pipe(Effect.forever);
   yield* cycle;
