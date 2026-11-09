@@ -58,6 +58,7 @@ export interface NativeInputRequest {
 
 export interface InputThread {
   readonly id: string;
+  readonly pendingRequestId?: string | null;
   readonly rootThreadId?: string;
   readonly active?: boolean;
   readonly archived?: boolean;

@@ -326,13 +326,81 @@ test("fast input cycles process the inbox before discovery and avoid rescanning 
   };
   try {
     await makeInputCoordinator({ native, telegram, store, now: () => clock, pollIntervalMs: 100 }).run(controller.signal);
-    assert.equal(polls, 3);
+    assert.ok(polls >= 3);
     assert.equal(order.filter((item) => item === "discovery").length, 2);
     assert.ok(order.indexOf("inbox-2") < order.lastIndexOf("discovery"));
   } finally {
     store.close();
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+for (const action of ["answer", "submit"] as const) {
+  test(`${action} is processed while a native discovery read remains blocked`, async () => {
+    await withHarness(async ({ native, telegram, runOnce, store }) => {
+      await runOnce();
+      const card = action === "submit"
+        ? await submitAllRequired({ native, telegram, runOnce })
+        : currentQuestionMessage(telegram, "single");
+      const entered = Promise.withResolvers<void>();
+      const release = Promise.withResolvers<NativeInputRequest[]>();
+      const processed = Promise.withResolvers<void>();
+      const originalRequests = native.requests.get("router-thread")!;
+      native.listRequests = async () => { entered.resolve(); return release.promise; };
+      const acknowledge = telegram.acknowledgeInputEvents;
+      telegram.acknowledgeInputEvents = async (ids) => {
+        const result = await acknowledge(ids);
+        processed.resolve();
+        return result;
+      };
+      let blocked = true;
+      const unblock = () => { blocked = false; release.resolve(originalRequests); };
+      const timeout = setTimeout(unblock, 1_500);
+      const cycle = runOnce();
+      try {
+        await entered.promise;
+        telegram.inbox = [action === "submit"
+          ? submitCallback(card, "during-scan-submit", 99)
+          : callback(card, { eventId: "during-scan-answer", value: "b" })];
+        await processed.promise;
+        assert.equal(blocked, true, "the inbox must progress before the scan completes");
+        const tracked = store.listRequests()[0]!;
+        if (action === "submit") {
+          assert.equal(native.responseCalls.length, 1);
+          assert.equal(tracked.submissionState, "accepted");
+        } else assert.equal(tracked.answers.single?.value, "b");
+      } finally {
+        clearTimeout(timeout);
+        unblock();
+        await cycle;
+      }
+      if (action === "submit") {
+        assert.equal(store.listRequests()[0]?.submissionState, "accepted");
+        assert.equal(store.listRequests()[0]?.lifecycle, "retired");
+        assert.equal(native.responseCalls.length, 1);
+      } else assert.ok(telegram.edits.length > 0);
+    });
+  });
+}
+
+test("pending questions take priority over history, including questions added during a slow scan", async () => {
+  await withHarness(async ({ native, advance, runOnce }) => {
+    native.threads = [
+      { id: "history-1", kind: "main" },
+      { id: "history-2", kind: "main" },
+      { id: "pending-1", kind: "main", pendingRequestId: "request-1" },
+    ];
+    native.listRequests = async (id) => {
+      native.listRequestCalls.push(id);
+      if (id === "pending-1") {
+        advance(6_000);
+        native.threads.push({ id: "pending-2", kind: "main", pendingRequestId: "request-2" });
+      }
+      return [];
+    };
+    await runOnce();
+    assert.deepEqual(native.listRequestCalls, ["pending-1", "pending-2", "history-1", "history-2"]);
+  });
 });
 
 test("fresh thread eligibility rejects an answer when its chat is archived after discovery", async () => {

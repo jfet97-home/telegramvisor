@@ -60,6 +60,7 @@ export interface InputCoordinatorDependencies {
   readonly pollIntervalMs?: number;
   readonly refreshPresentationOnStart?: boolean;
   readonly onError?: (phase: string) => void;
+  readonly onProgress?: (status: InputCoordinatorStatus) => void;
 }
 
 export interface InputCoordinatorStatus {
@@ -131,6 +132,7 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
   let lastErrorPhase: string | null = null;
   let cycleHadErrors = false;
   let lastDiscoveryAt: number | null = null;
+  let lastInboxAt = now();
   let routerThreadId: string | null = null;
   const isEligibleThread = isEligibleInputThread;
   let refreshPresentationOnStart = dependencies.refreshPresentationOnStart === true;
@@ -149,6 +151,34 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
     cycleHadErrors = true;
     lastErrorPhase = errorPhase;
     dependencies.onError?.(errorPhase);
+  };
+
+  const serviceInbox = async (): Promise<void> => {
+    await processInbox();
+    await renderActiveRequests();
+    await sendPreparedMessages();
+    lastCycleAt = new Date(now()).toISOString();
+    dependencies.onProgress?.(status());
+  };
+
+  const withInboxPriority = async <A>(operation: Promise<A>): Promise<A> => {
+    const waitingPhase = phase;
+    const result = operation.then(
+      (value) => ({ kind: "success" as const, value }),
+      (cause: unknown) => ({ kind: "failure" as const, cause }),
+    );
+    while (true) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const pending = new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), Math.max(0, intervalMs - (now() - lastInboxAt)));
+      });
+      const settled = await Promise.race([result, pending]);
+      clearTimeout(timer);
+      if (settled?.kind === "success") return settled.value;
+      if (settled?.kind === "failure") throw settled.cause;
+      try { await serviceInbox(); }
+      finally { phase = waitingPhase; }
+    }
   };
 
   const exactNativeRequest = async (
@@ -175,20 +205,39 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
     routerThreadId = descriptor.currentRouterThreadId ?? null;
 
     phase = "native_threads";
-    const listedThreads = await dependencies.native.listThreads();
-    if (!Array.isArray(listedThreads) || listedThreads.length > MAX_THREADS) throw new InputDomainError("native thread list exceeds its bound");
     const threads = new Map<string, InputThread>();
-    for (const rawThread of listedThreads) {
-      const thread = normalizeThread(rawThread, routerThreadId);
-      if (thread) threads.set(thread.id, thread);
-      else reportError("native_thread_invalid");
-    }
+    const queue = new Map<string, InputThread>();
+    const refreshThreads = async (): Promise<void> => {
+      const listedThreads = await dependencies.native.listThreads();
+      if (!Array.isArray(listedThreads) || listedThreads.length > MAX_THREADS) throw new InputDomainError("native thread list exceeds its bound");
+      const previous = new Map(threads);
+      threads.clear();
+      for (const rawThread of listedThreads) {
+        const thread = normalizeThread(rawThread, routerThreadId);
+        if (!thread) { reportError("native_thread_invalid"); continue; }
+        threads.set(thread.id, thread);
+        if (!previous.has(thread.id) || queue.has(thread.id) ||
+          thread.pendingRequestId && thread.pendingRequestId !== previous.get(thread.id)?.pendingRequestId) queue.set(thread.id, thread);
+      }
+      for (const id of queue.keys()) if (!threads.has(id)) queue.delete(id);
+    };
+    await refreshThreads();
+    let refreshedAt = now();
     const seen = new Set<string>();
-    for (const thread of threads.values()) {
+    while (queue.size > 0) {
+      if (now() - lastInboxAt >= intervalMs) await serviceInbox();
+      if (now() - refreshedAt >= INPUT_DISCOVERY_INTERVAL_MS) {
+        phase = "native_threads";
+        await refreshThreads();
+        refreshedAt = now();
+      }
+      const thread = [...queue.values()].find((thread) => thread.pendingRequestId) ?? queue.values().next().value;
+      if (!thread) break;
+      queue.delete(thread.id);
       if (!isEligibleThread(thread)) continue;
       phase = "native_requests";
       let requests: readonly NativeInputRequest[];
-      try { requests = await dependencies.native.listRequests(thread.id); }
+      try { requests = await withInboxPriority(dependencies.native.listRequests(thread.id)); }
       catch {
         reportError("native_requests");
         continue;
@@ -257,7 +306,7 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
         continue;
       }
       let current: NativeInputRequest | null;
-      try { current = await exactNativeRequest(tracked.threadId, tracked.requestId, tracked.request); }
+      try { current = await withInboxPriority(exactNativeRequest(tracked.threadId, tracked.requestId, tracked.request)); }
       catch (cause) {
         if (cause instanceof InputDomainError) {
           dependencies.store.invalidateRequest(tracked.inputId, tracked.requestRevision, now());
@@ -512,6 +561,7 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
 
   const processInbox = async (): Promise<void> => {
     phase = "telegram_input_inbox";
+    lastInboxAt = now();
     let events: readonly InputEvent[];
     try { events = await dependencies.telegram.readInputInbox(100); }
     catch {
@@ -671,9 +721,7 @@ export const makeInputCoordinator = (dependencies: InputCoordinatorDependencies)
     cycleHadErrors = false;
     const processFirst = !forceDiscovery && lastDiscoveryAt !== null;
     if (processFirst) {
-      await processInbox();
-      await renderActiveRequests();
-      await sendPreparedMessages();
+      await serviceInbox();
     }
     const discoveryDue = forceDiscovery || lastDiscoveryAt === null || now() - lastDiscoveryAt >= INPUT_DISCOVERY_INTERVAL_MS;
     if (discoveryDue) {

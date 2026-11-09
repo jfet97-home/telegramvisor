@@ -392,6 +392,44 @@ export const makeInputTelegramClient = (
     }
   };
 
+  const pendingReceipts = new Map<string, number>();
+  let receiptsRunning = false;
+  const sendReceipts = async (): Promise<void> => {
+    receiptsRunning = true;
+    try {
+      for (const [key, messageId] of pendingReceipts) {
+        try {
+          const prior = parseBody(await call("get_delivery_status", { delivery_key: key }));
+          const body = prior.value;
+          if (prior.invalid || prior.isError || !body || body.ok !== true || body.delivery_key !== key) {
+            dependencies.onReceiptFailure?.(key);
+            continue;
+          }
+          if (body.state === "sent" && isRecord(body.delivery) && body.delivery.ok === true && body.delivery.result === true) continue;
+          if (body.state !== "not_found") { dependencies.onReceiptFailure?.(key); continue; }
+          const received = await mutationCall("set_message_reaction", { message_id: messageId, emoji: "👍", delivery_key: key }, true);
+          if (received.kind !== "done") {
+            await call("get_delivery_status", { delivery_key: key });
+            dependencies.onReceiptFailure?.(key);
+          }
+        } catch { dependencies.onReceiptFailure?.(key); }
+        finally { pendingReceipts.delete(key); }
+      }
+    } finally { receiptsRunning = false; }
+  };
+  const queueReceipts = (events: readonly InputEvent[]): void => {
+    for (const event of events) {
+      if (!event.contributionId || !/^[1-9][0-9]*$/u.test(event.contributionId) || event.edited === true) continue;
+      const messageId = Number(event.contributionId);
+      if (!positiveInteger(messageId)) continue;
+      const key = `telegram-${event.updateId}-received-1`;
+      if (pendingReceipts.has(key)) continue;
+      if (pendingReceipts.size >= MAX_EVENTS) { dependencies.onReceiptFailure?.(key); continue; }
+      pendingReceipts.set(key, messageId);
+    }
+    if (!receiptsRunning && pendingReceipts.size > 0) void sendReceipts();
+  };
+
   return {
     sendInputNotification: async (message, deliveryKey, messageId) => {
       if (!nonEmptyString(deliveryKey, 128) || !validateMessage(message) || message.buttons.length > 0 ||
@@ -464,27 +502,7 @@ export const makeInputTelegramClient = (
       if (envelope.invalid || envelope.isError || !envelope.value || envelope.value.ok !== true ||
         !Array.isArray(envelope.value.events) || envelope.value.events.length > limit) throw new InputTelegramError("invalid_response");
       const events = envelope.value.events.map(parseEvent);
-      for (const event of events) {
-        if (!event.contributionId || !/^[1-9][0-9]*$/u.test(event.contributionId) || event.edited === true) continue;
-        const messageId = Number(event.contributionId);
-        if (!positiveInteger(messageId)) continue;
-        const key = `telegram-${event.updateId}-received-1`;
-        try {
-          const prior = parseBody(await call("get_delivery_status", { delivery_key: key }));
-          const body = prior.value;
-          if (prior.invalid || prior.isError || !body || body.ok !== true || body.delivery_key !== key) {
-            dependencies.onReceiptFailure?.(key);
-            continue;
-          }
-          if (body.state === "sent" && isRecord(body.delivery) && body.delivery.ok === true && body.delivery.result === true) continue;
-          if (body.state !== "not_found") { dependencies.onReceiptFailure?.(key); continue; }
-          const received = await mutationCall("set_message_reaction", { message_id: messageId, emoji: "👍", delivery_key: key }, true);
-          if (received.kind !== "done") {
-            await call("get_delivery_status", { delivery_key: key });
-            dependencies.onReceiptFailure?.(key);
-          }
-        } catch { dependencies.onReceiptFailure?.(key); }
-      }
+      queueReceipts(events);
       return events;
     },
     acknowledgeInputEvents: (eventIds, deliveryKey) => {
